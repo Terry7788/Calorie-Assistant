@@ -20,8 +20,8 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
   const [name, setName] = useState("");
   const [baseAmount, setBaseAmount] = useState(100);
   const [baseUnit, setBaseUnit] = useState("grams");
-  const [calories, setCalories] = useState(0);
-  const [protein, setProtein] = useState(0);
+  const [calories, setCalories] = useState("");
+  const [protein, setProtein] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -37,14 +37,14 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
       setName(initial.name ?? "");
       setBaseAmount(Number(initial.baseAmount) ?? 100);
       setBaseUnit(initial.baseUnit ?? "grams");
-      setCalories(Number(initial.calories) ?? 0);
-      setProtein(initial.protein != null ? Number(initial.protein) : 0);
+      setCalories(initial.calories != null ? Number(initial.calories) : "");
+      setProtein(initial.protein != null ? Number(initial.protein) : "");
     } else {
       setName("");
       setBaseAmount(100);
       setBaseUnit("grams");
-      setCalories(0);
-      setProtein(0);
+      setCalories("");
+      setProtein("");
     }
   }, [initial]);
 
@@ -119,6 +119,7 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               size="sm"
               className="flex-1"
               classNames={{ input: "text-sm" }}
+              inputMode="decimal"
             />
             <Select
               label="Unit"
@@ -150,6 +151,7 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               size="sm"
               className="flex-1"
               classNames={{ input: "text-sm" }}
+              inputMode="decimal"
             />
             <Input
               label="Protein (g)"
@@ -161,6 +163,7 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               size="sm"
               className="flex-1"
               classNames={{ input: "text-sm" }}
+              inputMode="decimal"
             />
           </div>
           

@@ -40,6 +40,7 @@ export default function AddFoodButton({ food, onAdd }) {
         className="w-16"
         min="0.1"
         step="0.1"
+        inputMode="decimal"
       />
       <Button 
         size="sm" 
