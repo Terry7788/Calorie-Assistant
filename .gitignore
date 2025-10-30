@@ -1,0 +1,49 @@
+# Node / Next.js
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+dist/
+build/
+.cache/
+.turbo/
+.eslintcache
+.vercel/
+.vite/
+storybook-static/
+coverage/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Env & local config
+.env
+.env.*
+*.local
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Databases & misc
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Python (if present)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+
