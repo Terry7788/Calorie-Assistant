@@ -124,6 +124,8 @@ export default function HomePage() {
             placeholder="Search foods"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            isClearable
+            onClear={() => setSearch("")}
             size="sm"
             className="flex-1"
             aria-label="Search foods"

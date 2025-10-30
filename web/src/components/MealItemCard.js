@@ -43,6 +43,8 @@ export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit 
             className="w-20"
             min="0.1"
             step="0.1"
+            inputMode="decimal"
+            pattern="[0-9]*[.,]?[0-9]*"
             label="Servings"
           />
           <div className="text-sm text-muted">

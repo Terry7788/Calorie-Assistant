@@ -41,6 +41,7 @@ export default function AddFoodButton({ food, onAdd }) {
         min="0.1"
         step="0.1"
         inputMode="decimal"
+        pattern="[0-9]*[.,]?[0-9]*"
       />
       <Button 
         size="sm" 
