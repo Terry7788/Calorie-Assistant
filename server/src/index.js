@@ -8,10 +8,18 @@ const PORT = 4000;
 
 app.use(express.json());
 
-const allowedOrigin = 'http://localhost:3000';
+const allowedOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 app.use(
   cors({
-    origin: allowedOrigin,
+    origin: (origin, callback) => {
+      // Allow no-origin (like curl) and exact match to configured origin
+      if (!origin || origin === allowedOrigin) return callback(null, true);
+      // Allow Vercel preview/production domains if FRONTEND_ORIGIN includes vercel.app
+      if (allowedOrigin.includes('vercel.app') && /\.vercel\.app$/.test(new URL(origin).hostname)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
     credentials: false,
   })
 );
