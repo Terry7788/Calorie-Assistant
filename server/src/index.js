@@ -28,7 +28,8 @@ let db;
 
 async function initDatabase() {
   return new Promise((resolve, reject) => {
-    db = new sqlite3.Database('./calorie_assistant.db', (err) => {
+    const dbPath = process.env.DATABASE_PATH || './calorie_assistant.db';
+    db = new sqlite3.Database(dbPath, (err) => {
       if (err) {
         reject(err);
         return;

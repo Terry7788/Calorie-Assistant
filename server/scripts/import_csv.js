@@ -125,7 +125,8 @@ async function upsertFood(db, { name, baseAmount, baseUnit, calories, protein })
 }
 
 async function importFiles(files) {
-  const db = new sqlite3.Database(path.resolve('./calorie_assistant.db'));
+  const dbPath = process.env.DATABASE_PATH || './calorie_assistant.db';
+  const db = new sqlite3.Database(path.resolve(dbPath));
   await ensureDb(db);
 
   let inserted = 0;
