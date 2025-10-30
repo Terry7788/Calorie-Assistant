@@ -38,6 +38,8 @@ export default function AmountModal({ food, onClose }) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             type="number"
+            inputMode="decimal"
+            step="any"
             size="sm"
             className="flex-1"
           />
