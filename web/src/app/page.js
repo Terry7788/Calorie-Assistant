@@ -5,6 +5,7 @@ import { API } from "../lib/api";
 import { Input, Button } from "@nextui-org/react";
 import FoodForm from "../components/FoodForm";
 import MealItemCard from "../components/MealItemCard";
+import HamburgerButton from "../components/HamburgerButton";
 
 export default function HomePage() {
   const [foods, setFoods] = useState([]);
@@ -108,7 +109,10 @@ export default function HomePage() {
   return (
     <div className="container-mobile">
       <div className="card card-pad" style={{ marginBottom: 12 }}>
-        <h1 className="heading-1">Calorie Assistant</h1>
+        <div className="flex items-center gap-3">
+          <HamburgerButton />
+          <h1 className="heading-1" style={{ margin: 0 }}>Food Database</h1>
+        </div>
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 12 }}>
