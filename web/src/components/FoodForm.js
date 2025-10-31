@@ -103,7 +103,6 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
             placeholder="Name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            required
             size="sm"
           />
           
@@ -115,7 +114,6 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               type="number"
               value={baseAmount}
               onChange={(e) => setBaseAmount(e.target.value)}
-              required
               size="sm"
               className="flex-1"
               classNames={{ input: "text-sm" }}
@@ -147,7 +145,6 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               type="number"
               value={calories}
               onChange={(e) => setCalories(e.target.value)}
-              required
               size="sm"
               className="flex-1"
               classNames={{ input: "text-sm" }}
