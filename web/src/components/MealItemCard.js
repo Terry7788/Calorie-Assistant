@@ -56,10 +56,12 @@ export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit 
         <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
           <div className="flex-1">
             <h3 className="font-semibold">{item.food.name}</h3>
-            <p className="text-sm text-muted">
-              {Number(item.food.calories)} cal per {item.food.baseAmount} {item.food.baseUnit}
-              {item.food.protein != null ? ` · ${Number(item.food.protein)} g protein` : ''}
-            </p>
+            <div className="text-sm text-muted">
+              <div>{Number(item.food.calories)} cal per {item.food.baseAmount} {item.food.baseUnit}</div>
+              {item.food.protein != null && (
+                <div>{Number(item.food.protein)} g protein</div>
+              )}
+            </div>
           </div>
           <div className="flex gap-1">
             <Button size="sm" variant="ghost" onClick={() => onEdit(item.id)}>
