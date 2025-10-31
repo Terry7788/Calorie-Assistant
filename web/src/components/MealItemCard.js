@@ -7,30 +7,46 @@ export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit 
   // Convert stored multiplier to displayed amount
   const getDisplayAmount = () => {
     const multiplier = Number(item.servings);
+    if (multiplier === 0) return '';
     if (item.food.baseUnit === 'servings') {
-      return multiplier;
+      return multiplier.toString();
     }
     // For grams/ml, convert multiplier to actual amount
-    return multiplier * Number(item.food.baseAmount);
+    return (multiplier * Number(item.food.baseAmount)).toString();
   };
 
   const [amount, setAmount] = useState(getDisplayAmount());
 
-  // Update amount when item changes
+  // Update amount when item changes (but not when user is editing)
   useEffect(() => {
-    setAmount(getDisplayAmount());
+    // Only update if the field is not currently being edited (is empty or matches current value)
+    const currentValue = getDisplayAmount();
+    if (amount === '' || amount === currentValue) {
+      setAmount(currentValue);
+    }
   }, [item.servings, item.food.baseUnit, item.food.baseAmount]);
 
   function handleAmountChange(newAmount) {
     setAmount(newAmount);
+    
+    // If field is cleared, don't update the multiplier
+    if (newAmount === '' || newAmount === null || newAmount === undefined) {
+      return;
+    }
+    
     // Convert input amount to multiplier
+    const numAmount = Number(newAmount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return;
+    }
+    
     let multiplier;
     if (item.food.baseUnit === 'servings') {
-      multiplier = Number(newAmount);
+      multiplier = numAmount;
     } else {
       // For grams/ml, convert amount to multiplier
       const baseAmount = Number(item.food.baseAmount) || 1;
-      multiplier = Number(newAmount) / baseAmount;
+      multiplier = numAmount / baseAmount;
     }
     onUpdateServings(item.id, multiplier);
   }
