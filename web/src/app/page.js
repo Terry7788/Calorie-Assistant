@@ -6,6 +6,7 @@ import { Input, Button } from "@nextui-org/react";
 import FoodForm from "../components/FoodForm";
 import MealItemCard from "../components/MealItemCard";
 import HamburgerButton from "../components/HamburgerButton";
+import SaveMealModal from "../components/SaveMealModal";
 
 export default function HomePage() {
   const [foods, setFoods] = useState([]);
@@ -17,6 +18,7 @@ export default function HomePage() {
   const [totalCalories, setTotalCalories] = useState(0);
   const [totalProtein, setTotalProtein] = useState(0);
   const [mealItems, setMealItems] = useState([]);
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
   async function loadFoods(q = "") {
     try {
@@ -158,7 +160,17 @@ export default function HomePage() {
 
       {mealItems.length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 12 }}>
-          <h2 className="heading-2" style={{ marginBottom: 8 }}>Current meal</h2>
+          <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+            <h2 className="heading-2" style={{ margin: 0 }}>Current meal</h2>
+            <Button 
+              className="btn btn-primary"
+              size="sm"
+              onClick={() => setShowSaveModal(true)}
+              aria-label="Save meal"
+            >
+              Save Meal
+            </Button>
+          </div>
           <div className="space-y-3">
             {mealItems.map((item) => (
               <MealItemCard
@@ -172,6 +184,16 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      <SaveMealModal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        mealItems={mealItems}
+        onSaved={() => {
+          setShowSaveModal(false);
+          // Optionally show success message or refresh saved meals
+        }}
+      />
 
       <div className="card card-pad">
         {loading ? (
