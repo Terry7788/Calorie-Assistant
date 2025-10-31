@@ -51,7 +51,38 @@ async function initDatabase() {
           reject(err);
           return;
         }
-        resolve();
+        
+        // Create SavedMeals table
+        db.run(`
+          CREATE TABLE IF NOT EXISTS SavedMeals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `, (err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          
+          // Create SavedMealItems table
+          db.run(`
+            CREATE TABLE IF NOT EXISTS SavedMealItems (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              meal_id INTEGER NOT NULL,
+              food_id INTEGER NOT NULL,
+              servings REAL NOT NULL,
+              FOREIGN KEY (meal_id) REFERENCES SavedMeals(id) ON DELETE CASCADE,
+              FOREIGN KEY (food_id) REFERENCES Foods(id) ON DELETE CASCADE
+            )
+          `, (err) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            resolve();
+          });
+        });
       });
     });
   });
@@ -244,6 +275,197 @@ app.delete('/api/foods/:id', async (req, res) => {
   } catch (err) {
     console.error('DELETE /api/foods/:id error', err);
     res.status(500).json({ error: 'Failed to delete food' });
+  }
+});
+
+// Saved Meals Routes
+
+// List saved meals with optional search
+app.get('/api/saved-meals', async (req, res) => {
+  try {
+    const search = (req.query.search || '').toString().trim();
+    let query = `
+      SELECT 
+        sm.id,
+        sm.name,
+        sm.created_at as createdAt,
+        COUNT(smi.id) as itemCount,
+        SUM(f.calories * smi.servings) as totalCalories,
+        SUM(COALESCE(f.protein, 0) * smi.servings) as totalProtein
+      FROM SavedMeals sm
+      LEFT JOIN SavedMealItems smi ON sm.id = smi.meal_id
+      LEFT JOIN Foods f ON smi.food_id = f.id
+    `;
+    const params = [];
+
+    if (search) {
+      query += ' WHERE sm.name LIKE ?';
+      params.push(`%${search}%`);
+    }
+    
+    query += ' GROUP BY sm.id, sm.name, sm.created_at ORDER BY sm.created_at DESC';
+
+    db.all(query, params, (err, rows) => {
+      if (err) {
+        console.error('GET /api/saved-meals error', err);
+        res.status(500).json({ error: 'Failed to fetch saved meals' });
+        return;
+      }
+      res.json(rows || []);
+    });
+  } catch (err) {
+    console.error('GET /api/saved-meals error', err);
+    res.status(500).json({ error: 'Failed to fetch saved meals' });
+  }
+});
+
+// Get saved meal by id with items
+app.get('/api/saved-meals/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    // Get meal
+    db.get(
+      'SELECT id, name, created_at as createdAt FROM SavedMeals WHERE id = ?',
+      [id],
+      (err, meal) => {
+        if (err) {
+          console.error('GET /api/saved-meals/:id error', err);
+          res.status(500).json({ error: 'Failed to fetch meal' });
+          return;
+        }
+        
+        if (!meal) {
+          res.status(404).json({ error: 'Not found' });
+          return;
+        }
+
+        // Get meal items
+        db.all(
+          `SELECT 
+            smi.id,
+            smi.food_id as foodId,
+            smi.servings,
+            f.name,
+            f.base_amount as baseAmount,
+            f.base_unit as baseUnit,
+            f.calories,
+            f.protein
+          FROM SavedMealItems smi
+          JOIN Foods f ON smi.food_id = f.id
+          WHERE smi.meal_id = ?`,
+          [id],
+          (err, items) => {
+            if (err) {
+              console.error('GET /api/saved-meals/:id items error', err);
+              res.status(500).json({ error: 'Failed to fetch meal items' });
+              return;
+            }
+            
+            res.json({
+              ...meal,
+              items: items || []
+            });
+          }
+        );
+      }
+    );
+  } catch (err) {
+    console.error('GET /api/saved-meals/:id error', err);
+    res.status(500).json({ error: 'Failed to fetch saved meal' });
+  }
+});
+
+// Create saved meal
+app.post('/api/saved-meals', async (req, res) => {
+  try {
+    const { name, items } = req.body || {};
+    
+    if (!name || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Missing required fields: name and items' });
+    }
+
+    // Create meal
+    db.run(
+      'INSERT INTO SavedMeals (name) VALUES (?)',
+      [name],
+      function(err) {
+        if (err) {
+          console.error('POST /api/saved-meals error', err);
+          res.status(500).json({ error: 'Failed to create meal' });
+          return;
+        }
+        
+        const mealId = this.lastID;
+        
+        // Insert meal items
+        const placeholders = items.map(() => '(?, ?, ?)').join(', ');
+        const values = items.flatMap(item => [mealId, item.foodId, item.servings]);
+        
+        db.run(
+          `INSERT INTO SavedMealItems (meal_id, food_id, servings) VALUES ${placeholders}`,
+          values,
+          (err) => {
+            if (err) {
+              console.error('POST /api/saved-meals items error', err);
+              // Rollback meal creation
+              db.run('DELETE FROM SavedMeals WHERE id = ?', [mealId]);
+              res.status(500).json({ error: 'Failed to create meal items' });
+              return;
+            }
+            
+            // Return created meal
+            db.get(
+              `SELECT 
+                sm.id,
+                sm.name,
+                sm.created_at as createdAt
+              FROM SavedMeals sm
+              WHERE sm.id = ?`,
+              [mealId],
+              (err, meal) => {
+                if (err) {
+                  console.error('Error fetching created meal', err);
+                  res.status(500).json({ error: 'Failed to fetch created meal' });
+                  return;
+                }
+                res.status(201).json(meal);
+              }
+            );
+          }
+        );
+      }
+    );
+  } catch (err) {
+    console.error('POST /api/saved-meals error', err);
+    res.status(500).json({ error: 'Failed to create saved meal' });
+  }
+});
+
+// Delete saved meal
+app.delete('/api/saved-meals/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+    
+    db.run('DELETE FROM SavedMeals WHERE id = ?', [id], function(err) {
+      if (err) {
+        console.error('DELETE /api/saved-meals/:id error', err);
+        res.status(500).json({ error: 'Failed to delete meal' });
+        return;
+      }
+      
+      if (this.changes === 0) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      
+      res.status(204).send();
+    });
+  } catch (err) {
+    console.error('DELETE /api/saved-meals/:id error', err);
+    res.status(500).json({ error: 'Failed to delete saved meal' });
   }
 });
 
