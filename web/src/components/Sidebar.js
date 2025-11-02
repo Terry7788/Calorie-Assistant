@@ -12,6 +12,7 @@ export default function Sidebar() {
   const menuItems = [
     { label: "Food Database", path: "/" },
     { label: "Saved Meals", path: "/saved-meals" },
+    { label: "Step Counter", path: "/step-counter" },
   ];
 
   function handleNavigation(path) {
