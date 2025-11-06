@@ -57,6 +57,7 @@ export default function StepCounterPage() {
           </label>
           <Input
             type="number"
+            inputMode="numeric"
             placeholder="Enter time in minutes"
             value={time}
             onChange={(e) => setTime(e.target.value)}
@@ -74,6 +75,7 @@ export default function StepCounterPage() {
           </label>
           <Input
             type="number"
+            inputMode="decimal"
             placeholder="Enter speed"
             value={speed}
             onChange={(e) => setSpeed(e.target.value)}
@@ -91,6 +93,7 @@ export default function StepCounterPage() {
           </label>
           <Input
             type="number"
+            inputMode="numeric"
             placeholder="Enter height"
             value={height}
             onChange={(e) => setHeight(e.target.value)}
