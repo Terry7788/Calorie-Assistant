@@ -6,7 +6,7 @@ import HamburgerButton from "../../components/HamburgerButton";
 
 export default function StepCounterPage() {
   const [time, setTime] = useState("");
-  const [speed, setSpeed] = useState("4.5");
+  const [speed, setSpeed] = useState("5.0");
   const [height, setHeight] = useState("183");
   const [steps, setSteps] = useState(0);
 
@@ -37,7 +37,7 @@ export default function StepCounterPage() {
 
   function handleReset() {
     setTime("");
-    setSpeed("4.5");
+    setSpeed("5.0");
     setHeight("183");
   }
 
