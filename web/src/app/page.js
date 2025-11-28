@@ -226,6 +226,20 @@ export default function HomePage() {
     }
   }
 
+  async function clearCurrentMeal() {
+    try {
+      const res = await fetch(`${API}/api/current-meal`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        console.error("Failed to clear meal");
+      }
+      // Socket.IO will update the UI automatically
+    } catch (e) {
+      console.error("Failed to clear meal", e);
+    }
+  }
+
   // Recompute totals automatically
   useEffect(() => {
     const totals = mealItems.reduce(
@@ -318,14 +332,24 @@ export default function HomePage() {
         <div className="card card-pad" style={{ marginBottom: 12 }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
             <h2 className="heading-2" style={{ margin: 0 }}>Current meal</h2>
-            <Button 
-              className="btn btn-primary"
-              size="sm"
-              onClick={() => setShowSaveModal(true)}
-              aria-label="Save meal"
-            >
-              Save Meal
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                className="btn btn-ghost"
+                size="sm"
+                onClick={clearCurrentMeal}
+                aria-label="Clear meal"
+              >
+                Clear
+              </Button>
+              <Button 
+                className="btn btn-primary"
+                size="sm"
+                onClick={() => setShowSaveModal(true)}
+                aria-label="Save meal"
+              >
+                Save Meal
+              </Button>
+            </div>
           </div>
           <div className="space-y-3">
             {mealItems.map((item) => (
