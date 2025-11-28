@@ -51,6 +51,25 @@ export default function StepCounterPage() {
       </div>
 
       <div className="card card-pad" style={{ marginBottom: 12 }}>
+        <div className="text-sm font-medium" style={{ marginBottom: 8 }}>
+          Quick Time
+        </div>
+        <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
+          {[10, 15, 20, 25, 30, 35, 45, 50, 55, 60].map((minutes) => (
+            <Button
+              key={minutes}
+              className="btn btn-primary"
+              size="sm"
+              onClick={() => setTime(String(minutes))}
+              aria-label={`Set time to ${minutes} minutes`}
+            >
+              {minutes} min
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div className="card card-pad" style={{ marginBottom: 12 }}>
         <div style={{ marginBottom: 16 }}>
           <label className="text-sm font-medium" style={{ display: "block", marginBottom: 8 }}>
             Walking Time (minutes)
