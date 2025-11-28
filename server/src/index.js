@@ -2,8 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: false,
+  },
+});
 const PORT = 4000;
 
 app.use(express.json());
@@ -80,7 +90,45 @@ async function initDatabase() {
               reject(err);
               return;
             }
-            resolve();
+            
+            // Create CurrentMeal table (single row)
+            db.run(`
+              CREATE TABLE IF NOT EXISTS CurrentMeal (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+              )
+            `, (err) => {
+              if (err) {
+                reject(err);
+                return;
+              }
+              
+              // Initialize CurrentMeal if it doesn't exist
+              db.run(`
+                INSERT OR IGNORE INTO CurrentMeal (id) VALUES (1)
+              `, (err) => {
+                if (err) {
+                  reject(err);
+                  return;
+                }
+                
+                // Create CurrentMealItems table
+                db.run(`
+                  CREATE TABLE IF NOT EXISTS CurrentMealItems (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    food_id INTEGER NOT NULL,
+                    servings REAL NOT NULL,
+                    FOREIGN KEY (food_id) REFERENCES Foods(id) ON DELETE CASCADE
+                  )
+                `, (err) => {
+                  if (err) {
+                    reject(err);
+                    return;
+                  }
+                  resolve();
+                });
+              });
+            });
           });
         });
       });
@@ -162,6 +210,8 @@ app.post('/api/foods', async (req, res) => {
               res.status(500).json({ error: 'Failed to fetch created food' });
               return;
             }
+            // Broadcast food created event
+            io.emit('food-created', row);
             res.status(201).json(row);
           }
         );
@@ -241,6 +291,8 @@ app.put('/api/foods/:id', async (req, res) => {
               res.status(500).json({ error: 'Failed to fetch updated food' });
               return;
             }
+            // Broadcast food updated event
+            io.emit('food-updated', row);
             res.json(row);
           }
         );
@@ -270,6 +322,8 @@ app.delete('/api/foods/:id', async (req, res) => {
         return;
       }
       
+      // Broadcast food deleted event
+      io.emit('food-deleted', { id });
       res.status(204).send();
     });
   } catch (err) {
@@ -469,7 +523,235 @@ app.delete('/api/saved-meals/:id', async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
+// Current Meal Routes
+
+// Get current meal
+app.get('/api/current-meal', async (req, res) => {
+  try {
+    db.all(
+      `SELECT 
+        cmi.id,
+        cmi.food_id as foodId,
+        cmi.servings,
+        f.name,
+        f.base_amount as baseAmount,
+        f.base_unit as baseUnit,
+        f.calories,
+        f.protein
+      FROM CurrentMealItems cmi
+      JOIN Foods f ON cmi.food_id = f.id
+      ORDER BY cmi.id ASC`,
+      [],
+      (err, items) => {
+        if (err) {
+          console.error('GET /api/current-meal error', err);
+          res.status(500).json({ error: 'Failed to fetch current meal' });
+          return;
+        }
+        res.json(items || []);
+      }
+    );
+  } catch (err) {
+    console.error('GET /api/current-meal error', err);
+    res.status(500).json({ error: 'Failed to fetch current meal' });
+  }
+});
+
+// Add item to current meal
+app.post('/api/current-meal/items', async (req, res) => {
+  try {
+    const { foodId, servings } = req.body || {};
+    if (!foodId || servings === undefined) {
+      return res.status(400).json({ error: 'Missing required fields: foodId and servings' });
+    }
+
+    const foodIdNum = Number(foodId);
+    const servingsNum = toNumber(servings);
+    if (!Number.isInteger(foodIdNum) || !servingsNum || servingsNum <= 0) {
+      return res.status(400).json({ error: 'Invalid foodId or servings' });
+    }
+
+    // Check if food exists
+    db.get('SELECT id FROM Foods WHERE id = ?', [foodIdNum], (err, food) => {
+      if (err || !food) {
+        return res.status(404).json({ error: 'Food not found' });
+      }
+
+      // Check if item already exists
+      db.get(
+        'SELECT id FROM CurrentMealItems WHERE food_id = ?',
+        [foodIdNum],
+        (err, existing) => {
+          if (err) {
+            console.error('POST /api/current-meal/items error', err);
+            return res.status(500).json({ error: 'Failed to check existing item' });
+          }
+
+          if (existing) {
+            // Update existing item
+            db.run(
+              'UPDATE CurrentMealItems SET servings = ? WHERE food_id = ?',
+              [servingsNum, foodIdNum],
+              function(err) {
+                if (err) {
+                  console.error('POST /api/current-meal/items update error', err);
+                  return res.status(500).json({ error: 'Failed to update item' });
+                }
+                updateCurrentMealTimestamp();
+                broadcastMealUpdate();
+                res.json({ id: existing.id, foodId: foodIdNum, servings: servingsNum });
+              }
+            );
+          } else {
+            // Insert new item
+            db.run(
+              'INSERT INTO CurrentMealItems (food_id, servings) VALUES (?, ?)',
+              [foodIdNum, servingsNum],
+              function(err) {
+                if (err) {
+                  console.error('POST /api/current-meal/items insert error', err);
+                  return res.status(500).json({ error: 'Failed to add item' });
+                }
+                updateCurrentMealTimestamp();
+                broadcastMealUpdate();
+                res.status(201).json({ id: this.lastID, foodId: foodIdNum, servings: servingsNum });
+              }
+            );
+          }
+        }
+      );
+    });
+  } catch (err) {
+    console.error('POST /api/current-meal/items error', err);
+    res.status(500).json({ error: 'Failed to add item to current meal' });
+  }
+});
+
+// Update item servings in current meal
+app.put('/api/current-meal/items/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { servings } = req.body || {};
+    
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+    const servingsNum = toNumber(servings);
+    if (!servingsNum || servingsNum <= 0) {
+      return res.status(400).json({ error: 'Invalid servings' });
+    }
+
+    db.run(
+      'UPDATE CurrentMealItems SET servings = ? WHERE id = ?',
+      [servingsNum, id],
+      function(err) {
+        if (err) {
+          console.error('PUT /api/current-meal/items/:id error', err);
+          return res.status(500).json({ error: 'Failed to update item' });
+        }
+        
+        if (this.changes === 0) {
+          return res.status(404).json({ error: 'Not found' });
+        }
+
+        updateCurrentMealTimestamp();
+        broadcastMealUpdate();
+        res.json({ id, servings: servingsNum });
+      }
+    );
+  } catch (err) {
+    console.error('PUT /api/current-meal/items/:id error', err);
+    res.status(500).json({ error: 'Failed to update item' });
+  }
+});
+
+// Delete item from current meal
+app.delete('/api/current-meal/items/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+    
+    db.run('DELETE FROM CurrentMealItems WHERE id = ?', [id], function(err) {
+      if (err) {
+        console.error('DELETE /api/current-meal/items/:id error', err);
+        return res.status(500).json({ error: 'Failed to delete item' });
+      }
+      
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      updateCurrentMealTimestamp();
+      broadcastMealUpdate();
+      res.status(204).send();
+    });
+  } catch (err) {
+    console.error('DELETE /api/current-meal/items/:id error', err);
+    res.status(500).json({ error: 'Failed to delete item' });
+  }
+});
+
+// Clear current meal
+app.delete('/api/current-meal', async (req, res) => {
+  try {
+    db.run('DELETE FROM CurrentMealItems', [], function(err) {
+      if (err) {
+        console.error('DELETE /api/current-meal error', err);
+        return res.status(500).json({ error: 'Failed to clear meal' });
+      }
+      updateCurrentMealTimestamp();
+      broadcastMealUpdate();
+      res.status(204).send();
+    });
+  } catch (err) {
+    console.error('DELETE /api/current-meal error', err);
+    res.status(500).json({ error: 'Failed to clear meal' });
+  }
+});
+
+// Helper function to update current meal timestamp
+function updateCurrentMealTimestamp() {
+  db.run('UPDATE CurrentMeal SET updated_at = CURRENT_TIMESTAMP WHERE id = 1');
+}
+
+// Helper function to broadcast meal update to all connected clients
+async function broadcastMealUpdate() {
+  try {
+    db.all(
+      `SELECT 
+        cmi.id,
+        cmi.food_id as foodId,
+        cmi.servings,
+        f.name,
+        f.base_amount as baseAmount,
+        f.base_unit as baseUnit,
+        f.calories,
+        f.protein
+      FROM CurrentMealItems cmi
+      JOIN Foods f ON cmi.food_id = f.id
+      ORDER BY cmi.id ASC`,
+      [],
+      (err, items) => {
+        if (err) {
+          console.error('Error fetching meal for broadcast', err);
+          return;
+        }
+        io.emit('meal-updated', items || []);
+      }
+    );
+  } catch (err) {
+    console.error('Error broadcasting meal update', err);
+  }
+}
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+httpServer.listen(PORT, async () => {
   try {
     await initDatabase();
     console.log(`Server running on http://localhost:${PORT}`);

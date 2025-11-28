@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { API } from "../lib/api";
+import { getSocket } from "../lib/socket";
 import { Input, Button } from "@nextui-org/react";
 import FoodForm from "../components/FoodForm";
 import MealItemCard from "../components/MealItemCard";
@@ -19,6 +20,8 @@ export default function HomePage() {
   const [totalProtein, setTotalProtein] = useState(0);
   const [mealItems, setMealItems] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [loadingMeal, setLoadingMeal] = useState(true);
+  const searchTimeoutRef = useRef(null);
 
   async function loadFoods(q = "") {
     try {
@@ -36,18 +39,138 @@ export default function HomePage() {
 
   useEffect(() => {
     loadFoods("");
+    loadCurrentMeal();
+    
+    // Set up Socket.IO listener for real-time updates
+    const socket = getSocket();
+    
+    const handleMealUpdate = (items) => {
+      // Transform API format to component format
+      const transformed = items.map((item) => ({
+        id: item.id,
+        food: {
+          id: item.foodId,
+          name: item.name,
+          baseAmount: item.baseAmount,
+          baseUnit: item.baseUnit,
+          calories: item.calories,
+          protein: item.protein,
+        },
+        servings: item.servings,
+      }));
+      setMealItems(transformed);
+    };
+    
+    const handleFoodCreated = (food) => {
+      // Add new food to the list
+      // Note: If there's an active search, the food will be filtered by the search query
+      setFoods((prev) => {
+        // Check if food already exists (shouldn't happen, but just in case)
+        if (prev.some(f => f.id === food.id)) {
+          return prev;
+        }
+        // Add the new food and sort by name
+        const updated = [...prev, food];
+        return updated.sort((a, b) => a.name.localeCompare(b.name));
+      });
+    };
+    
+    const handleFoodUpdated = (food) => {
+      // Update the food in the list
+      setFoods((prev) => {
+        const updated = prev.map((f) => (f.id === food.id ? food : f));
+        // Re-sort to maintain alphabetical order
+        return updated.sort((a, b) => a.name.localeCompare(b.name));
+      });
+      
+      // Also update in meal items if present
+      setMealItems((prev) =>
+        prev.map((item) =>
+          item.food.id === food.id
+            ? { ...item, food }
+            : item
+        )
+      );
+    };
+    
+    const handleFoodDeleted = ({ id }) => {
+      // Remove the food from the list
+      setFoods((prev) => prev.filter((f) => f.id !== id));
+      
+      // Also remove from meal items if present
+      setMealItems((prev) => prev.filter((item) => item.food.id !== id));
+    };
+    
+    socket.on("meal-updated", handleMealUpdate);
+    socket.on("food-created", handleFoodCreated);
+    socket.on("food-updated", handleFoodUpdated);
+    socket.on("food-deleted", handleFoodDeleted);
+
+    return () => {
+      socket.off("meal-updated", handleMealUpdate);
+      socket.off("food-created", handleFoodCreated);
+      socket.off("food-updated", handleFoodUpdated);
+      socket.off("food-deleted", handleFoodDeleted);
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
   }, []);
 
-  const filteredFoods = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return foods;
-    return foods.filter((f) => f.name.toLowerCase().includes(q));
-  }, [foods, search]);
+  // Debounced search - refetch on each keystroke with debounce
+  useEffect(() => {
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // Set new timeout to fetch after user stops typing
+    searchTimeoutRef.current = setTimeout(() => {
+      loadFoods(search);
+    }, 300); // 300ms debounce
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [search]);
+
+  async function loadCurrentMeal() {
+    try {
+      setLoadingMeal(true);
+      const res = await fetch(`${API}/api/current-meal`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        // Transform API format to component format
+        const transformed = data.map((item) => ({
+          id: item.id,
+          food: {
+            id: item.foodId,
+            name: item.name,
+            baseAmount: item.baseAmount,
+            baseUnit: item.baseUnit,
+            calories: item.calories,
+            protein: item.protein,
+          },
+          servings: item.servings,
+        }));
+        setMealItems(transformed);
+      }
+    } catch (e) {
+      console.error("Failed to load current meal", e);
+    } finally {
+      setLoadingMeal(false);
+    }
+  }
+
+  // No client-side filtering needed - server handles it
+  const filteredFoods = foods;
 
   function onAddedOrUpdated(food) {
     setShowForm(false);
     setEditingFood(null);
-    loadFoods(search);
+    // Don't reload foods - Socket.IO will update them automatically
   }
 
 
@@ -57,22 +180,50 @@ export default function HomePage() {
     setTotalCalories(prev => prev + totalCaloriesToAdd);
   }
 
-  function addToMeal(food) {
-    const exists = mealItems.some(item => item.food.id === food.id);
-    if (exists) return; // do not increment or change totals if already present
-    setMealItems(prev => [...prev, { food, servings: 1, id: Date.now() }]);
+  async function addToMeal(food) {
+    try {
+      const res = await fetch(`${API}/api/current-meal/items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ foodId: food.id, servings: 1 }),
+      });
+      if (!res.ok) {
+        console.error("Failed to add item to meal");
+      }
+      // Socket.IO will update the UI automatically
+    } catch (e) {
+      console.error("Failed to add item to meal", e);
+    }
   }
 
-  function updateMealItem(itemId, newServings) {
-    setMealItems(prev => prev.map(item => 
-      item.id === itemId 
-        ? { ...item, servings: newServings }
-        : item
-    ));
+  async function updateMealItem(itemId, newServings) {
+    try {
+      const res = await fetch(`${API}/api/current-meal/items/${itemId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ servings: newServings }),
+      });
+      if (!res.ok) {
+        console.error("Failed to update item");
+      }
+      // Socket.IO will update the UI automatically
+    } catch (e) {
+      console.error("Failed to update item", e);
+    }
   }
 
-  function removeFromMeal(itemId) {
-    setMealItems(prev => prev.filter(item => item.id !== itemId));
+  async function removeFromMeal(itemId) {
+    try {
+      const res = await fetch(`${API}/api/current-meal/items/${itemId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        console.error("Failed to remove item");
+      }
+      // Socket.IO will update the UI automatically
+    } catch (e) {
+      console.error("Failed to remove item", e);
+    }
   }
 
   // Recompute totals automatically
@@ -98,11 +249,13 @@ export default function HomePage() {
     }
   }
 
-  function handleDeleteFood(foodId) {
+  async function handleDeleteFood(foodId) {
     // Remove from meal items if it exists
-    setMealItems(prev => prev.filter(item => item.food.id !== foodId));
-    // Refresh the foods list
-    loadFoods(search);
+    const mealItem = mealItems.find(item => item.food.id === foodId);
+    if (mealItem) {
+      await removeFromMeal(mealItem.id);
+    }
+    // Don't reload foods - Socket.IO will update them automatically
     // Close the form
     setShowForm(false);
     setEditingFood(null);
@@ -131,7 +284,10 @@ export default function HomePage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             isClearable
-            onClear={() => setSearch("")}
+            onClear={() => {
+              setSearch("");
+              loadFoods("");
+            }}
             size="sm"
             className="flex-1"
             aria-label="Search foods"
@@ -203,7 +359,7 @@ export default function HomePage() {
         ) : (
           <div>
             {filteredFoods.map((f, idx) => {
-              const isInMeal = mealItems.some(item => item.food.id === f.id);
+              const mealItem = mealItems.find(item => item.food.id === f.id);
               return (
               <div key={f.id} className={`flex items-center justify-between py-3 ${idx !== filteredFoods.length - 1 ? 'border-b' : ''}`} style={{ borderColor: 'var(--border)' }}>
                 <div className="flex-1">
@@ -218,9 +374,8 @@ export default function HomePage() {
                   size="sm"
                   onClick={() => addToMeal(f)}
                   aria-label={`Add ${f.name} to meal`}
-                  disabled={isInMeal}
                 >
-                  {isInMeal ? 'Added' : 'Add'}
+                  {mealItem ? 'Update' : 'Add'}
                 </Button>
               </div>
             );})}

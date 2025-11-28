@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { API } from "../../lib/api";
-import { Card, CardBody, Input, Button } from "@nextui-org/react";
+import { Card, CardBody, Input, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@nextui-org/react";
 import HamburgerButton from "../../components/HamburgerButton";
 
 export default function SavedMealsPage() {
@@ -12,6 +12,9 @@ export default function SavedMealsPage() {
   const [selectedMeal, setSelectedMeal] = useState(null);
   const [mealDetail, setMealDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [mealToDelete, setMealToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function loadSavedMeals(q = "") {
     try {
@@ -62,23 +65,68 @@ export default function SavedMealsPage() {
     }
   }
 
-  async function handleDeleteMeal(mealId, e) {
-    e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this meal?")) return;
+  function openDeleteModal(mealId, mealName, e) {
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    setMealToDelete({ id: mealId, name: mealName });
+    setDeleteModalOpen(true);
+  }
+
+  function closeDeleteModal() {
+    if (!deleting) {
+      setDeleteModalOpen(false);
+      setMealToDelete(null);
+    }
+  }
+
+  async function confirmDeleteMeal() {
+    if (!mealToDelete) return;
 
     try {
-      const res = await fetch(`${API}/api/saved-meals/${mealId}`, {
+      setDeleting(true);
+      const res = await fetch(`${API}/api/saved-meals/${mealToDelete.id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete meal");
       loadSavedMeals(search);
-      if (selectedMeal === mealId) {
+      if (selectedMeal === mealToDelete.id) {
         setSelectedMeal(null);
         setMealDetail(null);
       }
+      setDeleteModalOpen(false);
+      setMealToDelete(null);
     } catch (e) {
       console.error("Failed to delete meal", e);
       alert("Failed to delete meal");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleAddToCurrentMeal(mealDetail) {
+    if (!mealDetail || !mealDetail.items || mealDetail.items.length === 0) {
+      return;
+    }
+
+    try {
+      // Add each item from the saved meal to the current meal
+      for (const item of mealDetail.items) {
+        const res = await fetch(`${API}/api/current-meal/items`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            foodId: item.foodId, 
+            servings: item.servings 
+          }),
+        });
+        if (!res.ok) {
+          console.error(`Failed to add ${item.name} to current meal`);
+        }
+      }
+      // Socket.IO will broadcast the updates automatically
+    } catch (e) {
+      console.error("Failed to add meal to current meal", e);
     }
   }
 
@@ -151,7 +199,7 @@ export default function SavedMealsPage() {
                         size="sm"
                         variant="ghost"
                         color="danger"
-                        onClick={(e) => handleDeleteMeal(meal.id, e)}
+                        onClick={(e) => openDeleteModal(meal.id, meal.name, e)}
                       >
                         Delete
                       </Button>
@@ -195,10 +243,18 @@ export default function SavedMealsPage() {
                             );
                           })}
                           <div className="mt-3 pt-3 border-t" style={{ borderColor: "var(--border, #e5e7eb)" }}>
-                            <div className="text-sm font-semibold">
+                            <div className="text-sm font-semibold" style={{ marginBottom: 12 }}>
                               Total: {meal.totalCalories?.toFixed(0) || 0} calories
                               {meal.totalProtein ? ` · ${meal.totalProtein.toFixed(1)} g protein` : ""}
                             </div>
+                            <Button
+                              className="btn btn-primary"
+                              size="sm"
+                              onClick={() => handleAddToCurrentMeal(mealDetail)}
+                              style={{ width: "100%" }}
+                            >
+                              Add to Current Meal
+                            </Button>
                           </div>
                         </div>
                       ) : (
@@ -212,6 +268,45 @@ export default function SavedMealsPage() {
           })}
         </div>
       )}
+
+      <Modal 
+        isOpen={deleteModalOpen} 
+        onClose={closeDeleteModal}
+        size="sm"
+        placement="center"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>Delete Meal</ModalHeader>
+          <ModalBody>
+            <p>
+              Are you sure you want to delete <strong>{mealToDelete?.name}</strong>?
+            </p>
+            <p className="text-sm text-muted" style={{ marginTop: 8 }}>
+              This action cannot be undone.
+            </p>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant="ghost"
+              onClick={closeDeleteModal}
+              disabled={deleting}
+              size="sm"
+            >
+              Cancel
+            </Button>
+            <Button
+              className="btn btn-primary"
+              color="danger"
+              onClick={confirmDeleteMeal}
+              disabled={deleting}
+              size="sm"
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

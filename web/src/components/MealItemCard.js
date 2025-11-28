@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Input, Button, Card, CardBody } from "@nextui-org/react";
 
 export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit }) {
@@ -16,12 +16,14 @@ export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit 
   };
 
   const [amount, setAmount] = useState(getDisplayAmount());
+  const isFocusedRef = useRef(false);
 
-  // Update amount when item changes (but not when user is editing)
+  // Update amount when item changes from external source (Socket.IO)
   useEffect(() => {
-    // Only update if the field is not currently being edited (is empty or matches current value)
     const currentValue = getDisplayAmount();
-    if (amount === '' || amount === currentValue) {
+    
+    // Always update when item changes, unless user is actively typing in the field
+    if (!isFocusedRef.current) {
       setAmount(currentValue);
     }
   }, [item.servings, item.food.baseUnit, item.food.baseAmount]);
@@ -93,6 +95,15 @@ export default function MealItemCard({ item, onUpdateServings, onRemove, onEdit 
             type="number"
             value={amount}
             onChange={(e) => handleAmountChange(e.target.value)}
+            onFocus={() => {
+              isFocusedRef.current = true;
+            }}
+            onBlur={() => {
+              isFocusedRef.current = false;
+              // Update amount when user leaves field to ensure it matches the item
+              const currentValue = getDisplayAmount();
+              setAmount(currentValue);
+            }}
             size="sm"
             className="w-32"
             min="0.1"
