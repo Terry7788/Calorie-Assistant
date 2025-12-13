@@ -54,8 +54,8 @@ export default function StepCounterPage() {
         <div className="text-sm font-medium" style={{ marginBottom: 8 }}>
           Quick Time
         </div>
-        <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
-          {[10, 15, 20, 25, 30, 35, 45, 50, 55, 60].map((minutes) => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px" }}>
+          {[5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60].map((minutes) => (
             <Button
               key={minutes}
               className="btn btn-primary"

@@ -16,7 +16,7 @@ import {
   CardBody
 } from "@nextui-org/react";
 
-export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
+export default function FoodForm({ initial, onCancel, onSaved, onDelete, onSaveAndAdd }) {
   const [name, setName] = useState("");
   const [baseAmount, setBaseAmount] = useState(100);
   const [baseUnit, setBaseUnit] = useState("grams");
@@ -88,6 +88,31 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
     }
   }
 
+  async function handleSaveAndAdd(e) {
+    e.preventDefault();
+    try {
+      setSaving(true);
+      setError("");
+      const payload = { name, baseAmount: Number(baseAmount), baseUnit, calories: Number(calories), protein: Number(protein) };
+      const res = await fetch(initial ? `${API}/api/foods/${initial.id}` : `${API}/api/foods`, {
+        method: initial ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      const data = await res.json();
+      onSaved?.(data);
+      // Add to meal after saving
+      if (onSaveAndAdd) {
+        onSaveAndAdd(data);
+      }
+    } catch (e) {
+      setError("Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Card className="card mt-4">
       <CardBody className="card-pad">
@@ -124,7 +149,17 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               labelPlacement="outside"
               placeholder="Unit"
               selectedKeys={[baseUnit]}
-              onSelectionChange={(keys) => setBaseUnit(Array.from(keys)[0])}
+              onSelectionChange={(keys) => {
+                const newUnit = Array.from(keys)[0];
+                setBaseUnit(newUnit);
+                // When changing to servings, default base amount to 1
+                if (newUnit === "servings") {
+                  setBaseAmount(1);
+                } else if (newUnit === "grams" || newUnit === "ml") {
+                  // When changing to grams or ml, default base amount to 100
+                  setBaseAmount(100);
+                }
+              }}
               size="sm"
               className="w-[140px]"
               classNames={{ trigger: "text-sm" }}
@@ -184,6 +219,17 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete }) {
               <Button type="submit" className="btn btn-primary" disabled={saving} size="sm">
                 {saving ? 'Saving...' : 'Save'}
               </Button>
+              {!initial && onSaveAndAdd && (
+                <Button 
+                  type="button" 
+                  className="btn btn-primary" 
+                  disabled={saving} 
+                  size="sm"
+                  onClick={handleSaveAndAdd}
+                >
+                  {saving ? 'Saving...' : 'Save and Add Food'}
+                </Button>
+              )}
             </div>
           </div>
         </form>
