@@ -558,7 +558,15 @@ export default function HomePage() {
         }}
       />
 
-      <Modal isOpen={showClearModal} onClose={() => setShowClearModal(false)} size="sm">
+      <Modal 
+        isOpen={showClearModal} 
+        onClose={() => setShowClearModal(false)} 
+        size="sm"
+        classNames={{
+          base: "max-w-[420px]",
+          wrapper: "!items-start !pt-8",
+        }}
+      >
         <ModalContent>
           <ModalHeader>Clear Current Meal</ModalHeader>
           <ModalBody>
