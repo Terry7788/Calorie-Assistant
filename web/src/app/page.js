@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { API } from "../lib/api";
 import { getSocket } from "../lib/socket";
-import { Input, Button } from "@nextui-org/react";
+import { Input, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@nextui-org/react";
 import FoodForm from "../components/FoodForm";
 import MealItemCard from "../components/MealItemCard";
 import HamburgerButton from "../components/HamburgerButton";
 import SaveMealModal from "../components/SaveMealModal";
+import VoiceInputButton from "../components/VoiceInputButton";
 
 export default function HomePage() {
   const [foods, setFoods] = useState([]);
@@ -20,6 +21,7 @@ export default function HomePage() {
   const [totalProtein, setTotalProtein] = useState(0);
   const [mealItems, setMealItems] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
   const [loadingMeal, setLoadingMeal] = useState(true);
   const searchTimeoutRef = useRef(null);
 
@@ -45,19 +47,25 @@ export default function HomePage() {
     const socket = getSocket();
     
     const handleMealUpdate = (items) => {
+      console.log('[DEBUG] handleMealUpdate received items:', JSON.stringify(items));
       // Transform API format to component format
-      const transformed = items.map((item) => ({
-        id: item.id,
-        food: {
+      const transformed = items.map((item) => {
+        const foodObj = {
           id: item.foodId,
           name: item.name,
           baseAmount: item.baseAmount,
           baseUnit: item.baseUnit,
           calories: item.calories,
           protein: item.protein,
-        },
-        servings: item.servings,
-      }));
+        };
+        
+        return {
+          id: item.id,
+          food: foodObj,
+          servings: item.servings,
+        };
+      });
+      console.log('[DEBUG] handleMealUpdate transformed to:', JSON.stringify(transformed));
       setMealItems(transformed);
     };
     
@@ -154,6 +162,7 @@ export default function HomePage() {
             protein: item.protein,
           },
           servings: item.servings,
+          isTemporary: item.isTemporary || false,
         }));
         setMealItems(transformed);
       }
@@ -180,12 +189,13 @@ export default function HomePage() {
     setTotalCalories(prev => prev + totalCaloriesToAdd);
   }
 
-  async function addToMeal(food) {
+  async function addToMeal(food, servings = 1) {
     try {
+      // For database foods, send foodId
       const res = await fetch(`${API}/api/current-meal/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ foodId: food.id, servings: 1 }),
+        body: JSON.stringify({ foodId: food.id, servings }),
       });
       if (!res.ok) {
         console.error("Failed to add item to meal");
@@ -195,6 +205,163 @@ export default function HomePage() {
       console.error("Failed to add item to meal", e);
     }
   }
+
+  async function handleChangeCommand(fromFoodName, toFoodName) {
+    // Find the food item in the current meal that matches "from"
+    const mealItem = mealItems.find(item => 
+      item.food.name.toLowerCase().includes(fromFoodName.toLowerCase()) ||
+      fromFoodName.toLowerCase().includes(item.food.name.toLowerCase())
+    );
+
+    if (!mealItem) {
+      setError(`"${fromFoodName}" not found in current meal`);
+      return;
+    }
+
+    // Search for the replacement food in the database
+    try {
+      const searchRes = await fetch(`${API}/api/foods?search=${encodeURIComponent(toFoodName)}`);
+      const searchResults = await searchRes.json();
+      
+      // Try to find an exact or close match
+      const exactMatch = searchResults.find(f => 
+        f.name.toLowerCase() === toFoodName.toLowerCase()
+      );
+      
+      const closeMatch = searchResults.find(f => 
+        f.name.toLowerCase().includes(toFoodName.toLowerCase()) ||
+        toFoodName.toLowerCase().includes(f.name.toLowerCase())
+      );
+
+      const replacementFood = exactMatch || closeMatch;
+
+      if (!replacementFood) {
+        setError(`"${toFoodName}" not found in database`);
+        return;
+      }
+
+      // Remove the old food from meal
+      await removeFromMeal(mealItem.id);
+
+      // Add the new food with the same servings
+      await addToMeal(replacementFood, mealItem.servings);
+      
+      setError(""); // Clear any errors on success
+    } catch (e) {
+      console.error("Error changing food:", e);
+      setError("Failed to change food");
+    }
+  }
+
+  async function handleVoiceInputFromMainPage(parsedFoods) {
+    console.log('[DEBUG] handleVoiceInputFromMainPage called with:', JSON.stringify(parsedFoods));
+    
+    // Check if it's a change command
+    if (parsedFoods && parsedFoods.command === 'change') {
+      console.log('[DEBUG] Detected change command');
+      await handleChangeCommand(parsedFoods.from, parsedFoods.to);
+      return;
+    }
+
+    // Database search mode - proceed with database search
+    console.log('[DEBUG] Processing database food - WILL SEARCH DATABASE');
+    console.log('[DEBUG] Food to search for:', JSON.stringify(parsedFoods));
+
+    // Handle both single food and array of foods (from database)
+    const foods = Array.isArray(parsedFoods) ? parsedFoods : [parsedFoods];
+    
+    if (foods.length === 0 || !foods[0].name) {
+      setError("Could not identify food name from voice input");
+      return;
+    }
+
+    let foundCount = 0;
+    let notFoundCount = 0;
+
+    // Process each food item
+    for (const parsed of foods) {
+      if (!parsed.name) continue;
+      
+      // Search for the food in the database
+      try {
+        console.log('[DEBUG] Searching database for:', parsed.name);
+        const searchRes = await fetch(`${API}/api/foods?search=${encodeURIComponent(parsed.name)}`);
+        const searchResults = await searchRes.json();
+        console.log('[DEBUG] Database search results:', searchResults.length, 'items found');
+        
+        // Try to find an exact or close match
+        const exactMatch = searchResults.find(f => 
+          f.name.toLowerCase() === parsed.name.toLowerCase()
+        );
+        
+        const closeMatch = searchResults.find(f => 
+          f.name.toLowerCase().includes(parsed.name.toLowerCase()) ||
+          parsed.name.toLowerCase().includes(f.name.toLowerCase())
+        );
+
+        const matchedFood = exactMatch || closeMatch;
+
+        if (matchedFood) {
+          // Food found - add it to the meal
+          foundCount++;
+          // Calculate servings based on parsed amount
+          let servings = 1;
+          
+          if (parsed.baseAmount !== null && parsed.baseAmount !== undefined) {
+            if (parsed.baseUnit === "servings") {
+              // When user specifies servings (e.g., "2 apples"), use that number directly
+              servings = parsed.baseAmount;
+            } else if (parsed.baseUnit === matchedFood.baseUnit) {
+              // Same unit (grams or ml) - calculate servings
+              if (matchedFood.baseAmount) {
+                servings = parsed.baseAmount / matchedFood.baseAmount;
+              } else {
+                // If no baseAmount in DB, default to 100
+                const defaultBase = parsed.baseUnit === "ml" ? 100 : 100;
+                servings = parsed.baseAmount / defaultBase;
+              }
+            } else if (parsed.baseUnit === "grams" && matchedFood.baseUnit === "servings") {
+              // User said grams but food is in servings - can't convert, default to 1 serving
+              // The parsed amount (e.g., 100g) doesn't make sense as servings
+              servings = 1;
+            } else if (parsed.baseUnit === "ml" && matchedFood.baseUnit === "servings") {
+              // User said ml but food is in servings - can't convert, default to 1 serving
+              servings = 1;
+            } else if (parsed.baseUnit === "grams" && matchedFood.baseUnit === "ml") {
+              // Can't convert grams to ml - default to 1 serving
+              servings = 1;
+            } else if (parsed.baseUnit === "ml" && matchedFood.baseUnit === "grams") {
+              // Can't convert ml to grams - default to 1 serving
+              servings = 1;
+            } else {
+              // Units don't match and no conversion possible - default to 1 serving
+              servings = 1;
+            }
+          }
+          
+          await addToMeal(matchedFood, servings);
+        } else {
+          // Food not found - show error message
+          console.log('[DEBUG] Food not found in database:', parsed.name);
+          notFoundCount++;
+          if (notFoundCount === 1) {
+            setError(`"${parsed.name}" not found in database`);
+          } else {
+            setError(`${notFoundCount} food(s) not found in database`);
+          }
+        }
+      } catch (e) {
+        console.error("Error searching for food:", e);
+        setError("Failed to search for food");
+      }
+    }
+
+    // Clear errors if all foods found
+    if (notFoundCount === 0) {
+      setError("");
+    }
+  }
+
 
   async function updateMealItem(itemId, newServings) {
     try {
@@ -223,6 +390,24 @@ export default function HomePage() {
       // Socket.IO will update the UI automatically
     } catch (e) {
       console.error("Failed to remove item", e);
+    }
+  }
+
+  async function clearCurrentMeal() {
+    try {
+      const res = await fetch(`${API}/api/current-meal`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        console.error("Failed to clear meal");
+        setError("Failed to clear meal");
+      } else {
+        setShowClearModal(false);
+      }
+      // Socket.IO will update the UI automatically
+    } catch (e) {
+      console.error("Failed to clear meal", e);
+      setError("Failed to clear meal");
     }
   }
 
@@ -292,6 +477,10 @@ export default function HomePage() {
             className="flex-1"
             aria-label="Search foods"
           />
+          <VoiceInputButton 
+            onFoodParsed={handleVoiceInputFromMainPage}
+            disabled={loading}
+          />
           <Button 
             className="btn btn-soft"
             size="sm"
@@ -322,14 +511,24 @@ export default function HomePage() {
         <div className="card card-pad" style={{ marginBottom: 12 }}>
           <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
             <h2 className="heading-2" style={{ margin: 0 }}>Current meal</h2>
-            <Button 
-              className="btn btn-primary"
-              size="sm"
-              onClick={() => setShowSaveModal(true)}
-              aria-label="Save meal"
-            >
-              Save Meal
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                className="btn btn-soft"
+                size="sm"
+                onClick={() => setShowClearModal(true)}
+                aria-label="Clear meal"
+              >
+                Clear
+              </Button>
+              <Button 
+                className="btn btn-primary"
+                size="sm"
+                onClick={() => setShowSaveModal(true)}
+                aria-label="Save meal"
+              >
+                Save Meal
+              </Button>
+            </div>
           </div>
           <div className="space-y-3">
             {mealItems.map((item) => (
@@ -354,6 +553,31 @@ export default function HomePage() {
           // Optionally show success message or refresh saved meals
         }}
       />
+
+      <Modal isOpen={showClearModal} onClose={() => setShowClearModal(false)} size="sm">
+        <ModalContent>
+          <ModalHeader>Clear Current Meal</ModalHeader>
+          <ModalBody>
+            <p>Are you sure you want to clear all items from the current meal? This action cannot be undone.</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button 
+              className="btn btn-soft" 
+              onClick={() => setShowClearModal(false)}
+              size="sm"
+            >
+              Cancel
+            </Button>
+            <Button 
+              className="btn btn-primary" 
+              onClick={clearCurrentMeal}
+              size="sm"
+            >
+              Clear
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       <div className="card card-pad">
         {loading ? (

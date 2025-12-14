@@ -1,9 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import OpenAI from 'openai';
 
 const app = express();
 const httpServer = createServer(app);
@@ -116,16 +118,130 @@ async function initDatabase() {
                 db.run(`
                   CREATE TABLE IF NOT EXISTS CurrentMealItems (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    food_id INTEGER NOT NULL,
+                    food_id INTEGER,
                     servings REAL NOT NULL,
-                    FOREIGN KEY (food_id) REFERENCES Foods(id) ON DELETE CASCADE
+                    temp_food_name TEXT,
+                    temp_food_base_amount REAL,
+                    temp_food_base_unit TEXT,
+                    temp_food_calories REAL,
+                    temp_food_protein REAL,
+                    FOREIGN KEY (food_id) REFERENCES Foods(id) ON DELETE CASCADE,
+                    CHECK (food_id IS NOT NULL OR (temp_food_name IS NOT NULL))
                   )
                 `, (err) => {
                   if (err) {
                     reject(err);
                     return;
                   }
-                  resolve();
+                  
+                  // Check if we need to migrate the table structure
+                  // Check if temp_food_name column exists (indicates new schema)
+                  db.all(`PRAGMA table_info(CurrentMealItems)`, [], (err, columns) => {
+                    if (err) {
+                      resolve();
+                      return;
+                    }
+                    
+                    const hasTempColumns = columns && columns.some(col => col.name === 'temp_food_name');
+                    const foodIdColumn = columns && columns.find(col => col.name === 'food_id');
+                    const foodIdNullable = foodIdColumn && foodIdColumn.notnull === 0;
+                    
+                    // If temp columns don't exist OR food_id is NOT NULL, we need to migrate
+                    if (!hasTempColumns || !foodIdNullable) {
+                      // SQLite doesn't support MODIFY COLUMN, so we recreate the table
+                      db.run(`PRAGMA foreign_keys=off`, () => {
+                        db.run(`BEGIN TRANSACTION`, () => {
+                          // Create new table with correct schema
+                          db.run(`
+                            CREATE TABLE CurrentMealItems_new (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              food_id INTEGER,
+                              servings REAL NOT NULL,
+                              temp_food_name TEXT,
+                              temp_food_base_amount REAL,
+                              temp_food_base_unit TEXT,
+                              temp_food_calories REAL,
+                              temp_food_protein REAL,
+                              FOREIGN KEY (food_id) REFERENCES Foods(id) ON DELETE CASCADE,
+                              CHECK (food_id IS NOT NULL OR (temp_food_name IS NOT NULL))
+                            )
+                          `, (err) => {
+                            if (!err) {
+                              // Copy existing data
+                              if (hasTempColumns) {
+                                // Copy all columns
+                                db.run(`INSERT INTO CurrentMealItems_new SELECT * FROM CurrentMealItems`, (err) => {
+                                  if (!err) {
+                                    db.run(`DROP TABLE CurrentMealItems`, (err) => {
+                                      if (!err) {
+                                        db.run(`ALTER TABLE CurrentMealItems_new RENAME TO CurrentMealItems`, (err) => {
+                                          db.run(`COMMIT`, () => {
+                                            db.run(`PRAGMA foreign_keys=on`, () => {
+                                              resolve();
+                                            });
+                                          });
+                                        });
+                                      } else {
+                                        db.run(`ROLLBACK`, () => {
+                                          db.run(`PRAGMA foreign_keys=on`, () => {
+                                            resolve();
+                                          });
+                                        });
+                                      }
+                                    });
+                                  } else {
+                                    db.run(`ROLLBACK`, () => {
+                                      db.run(`PRAGMA foreign_keys=on`, () => {
+                                        resolve();
+                                      });
+                                    });
+                                  }
+                                });
+                              } else {
+                                // Copy only existing columns (id, food_id, servings)
+                                db.run(`INSERT INTO CurrentMealItems_new (id, food_id, servings) SELECT id, food_id, servings FROM CurrentMealItems`, (err) => {
+                                  if (!err) {
+                                    db.run(`DROP TABLE CurrentMealItems`, (err) => {
+                                      if (!err) {
+                                        db.run(`ALTER TABLE CurrentMealItems_new RENAME TO CurrentMealItems`, (err) => {
+                                          db.run(`COMMIT`, () => {
+                                            db.run(`PRAGMA foreign_keys=on`, () => {
+                                              resolve();
+                                            });
+                                          });
+                                        });
+                                      } else {
+                                        db.run(`ROLLBACK`, () => {
+                                          db.run(`PRAGMA foreign_keys=on`, () => {
+                                            resolve();
+                                          });
+                                        });
+                                      }
+                                    });
+                                  } else {
+                                    db.run(`ROLLBACK`, () => {
+                                      db.run(`PRAGMA foreign_keys=on`, () => {
+                                        resolve();
+                                      });
+                                    });
+                                  }
+                                });
+                              }
+                            } else {
+                              db.run(`ROLLBACK`, () => {
+                                db.run(`PRAGMA foreign_keys=on`, () => {
+                                  resolve();
+                                });
+                              });
+                            }
+                          });
+                        });
+                      });
+                    } else {
+                      // Table already has correct schema
+                      resolve();
+                    }
+                  });
                 });
               });
             });
@@ -142,9 +258,209 @@ function toNumber(value, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Initialize OpenAI client
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+}) : null;
+
 // Routes
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// Parse voice input using GPT-4o-mini
+app.post('/api/parse-voice-food', async (req, res) => {
+  try {
+    console.log('[DEBUG] POST /api/parse-voice-food called');
+    console.log('[DEBUG] Request body:', JSON.stringify(req.body));
+    
+    if (!openai) {
+      console.log('[DEBUG] OpenAI not configured');
+      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    }
+
+    const { text } = req.body || {};
+    console.log('[DEBUG] Text received:', text);
+    
+    if (!text || typeof text !== 'string') {
+      console.log('[DEBUG] Invalid text parameter');
+      return res.status(400).json({ error: 'Missing or invalid text parameter' });
+    }
+
+    const prompt = `You are parsing voice input to search for foods in a database. Your job is to extract the FOOD NAME and optionally amounts/quantities. The system will search the database for these foods.
+
+Spoken text: "${text}"
+
+Return ONLY valid JSON (no markdown, no explanations):
+
+If it's a change command (contains "change", "replace", "swap"):
+{
+  "command": "change",
+  "from": "original food name",
+  "to": "new food name"
+}
+
+Otherwise, return food object(s) with the FOOD NAME extracted:
+Single food:
+{
+  "name": "Food Name (extract and capitalize properly - this will be used to search the database)",
+  "baseAmount": 100,
+  "baseUnit": "grams"
+}
+
+Multiple foods (if "and" or "&" separates them):
+[
+  {"name": "Food 1", "baseAmount": 100, "baseUnit": "grams"},
+  {"name": "Food 2", "baseAmount": 1, "baseUnit": "servings"}
+]
+
+IMPORTANT RULES FOR DATABASE SEARCH MODE:
+1. Extract the FOOD NAME accurately - this will be used to search the database
+2. Extract amounts if mentioned (e.g., "2 apples" -> baseAmount: 2, baseUnit: "servings")
+3. Extract quantities if mentioned (e.g., "200 grams chicken" -> baseAmount: 200, baseUnit: "grams")
+4. Extract volumes if mentioned (e.g., "250ml coffee" -> baseAmount: 250, baseUnit: "ml")
+5. Do NOT include calories or protein - the database will provide these
+6. Focus on extracting the name and quantity/amount accurately for database lookup
+
+EXAMPLES:
+"2 apples" -> {"name": "Apple", "baseAmount": 2, "baseUnit": "servings"}
+"200 grams chicken breast" -> {"name": "Chicken Breast", "baseAmount": 200, "baseUnit": "grams"}
+"one banana" -> {"name": "Banana", "baseAmount": 1, "baseUnit": "servings"}
+"250ml skinny flat white" -> {"name": "Skinny Flat White", "baseAmount": 250, "baseUnit": "ml"}
+6. Extract serving size from text if mentioned, otherwise use typical serving sizes
+
+ESTIMATION GUIDELINES (use these if values not mentioned):
+- Cheeseburger: ~350 calories, ~18g protein, 1 serving
+- Coffee drinks: ~0.2-0.4 cal/ml, ~0.02g protein/ml (skinny versions: ~0.24 cal/ml)
+- Flat white/latte: ~0.32 cal/ml, ~0.025g protein/ml
+- Skinny flat white: ~0.24 cal/ml, ~0.02g protein/ml
+- Chicken/meat: ~165 cal/100g, ~31g protein/100g
+- Use your knowledge for other foods
+
+EXAMPLES:
+"1 flat white skinny" -> {"name": "Skinny Flat White", "calories": 60, "protein": 5, "baseAmount": 250, "baseUnit": "ml"}
+"1 cheeseburger" -> {"name": "Cheeseburger", "calories": 350, "protein": 18, "baseAmount": 1, "baseUnit": "servings"}
+"200g chicken" -> {"name": "Chicken", "calories": 330, "protein": 62, "baseAmount": 200, "baseUnit": "grams"}
+
+Return JSON only:`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant that parses food information from spoken text. Always return valid JSON only, no additional text.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 500,
+    });
+
+    const responseText = completion.choices[0]?.message?.content?.trim() || '{}';
+    
+    // Try to extract JSON from the response (in case it's wrapped in markdown or has extra text)
+    let jsonText = responseText;
+    // Check for array first, then object
+    const arrayMatch = responseText.match(/\[[\s\S]*\]/);
+    const objectMatch = responseText.match(/\{[\s\S]*\}/);
+    if (arrayMatch) {
+      jsonText = arrayMatch[0];
+    } else if (objectMatch) {
+      jsonText = objectMatch[0];
+    }
+
+    const parsed = JSON.parse(jsonText);
+
+    // Check if it's a change command
+    if (parsed.command === 'change' && parsed.from && parsed.to) {
+      console.log('[DEBUG] Detected change command:', parsed);
+      res.json({
+        command: 'change',
+        from: parsed.from,
+        to: parsed.to
+      });
+      return;
+    }
+
+    // Normalize to array format for regular food entries
+    const foods = Array.isArray(parsed) ? parsed : [parsed];
+    console.log('[DEBUG] Processing', foods.length, 'food item(s)');
+
+    // Validate and normalize each food item (for database search, we only need name and amount)
+    const result = foods.map(food => {
+      const lowerName = (food.name || '').toLowerCase();
+      
+      // Parse values (calories/protein not needed for database search mode)
+      let baseAmount = food.baseAmount !== null && food.baseAmount !== undefined ? Number(food.baseAmount) : null;
+      let baseUnit = food.baseUnit && ['grams', 'servings', 'ml'].includes(food.baseUnit) ? food.baseUnit : null;
+      
+      // Determine baseUnit and baseAmount if missing - fix incorrect units from AI
+      const isBeverage = lowerName.includes('coffee') || lowerName.includes('latte') || lowerName.includes('cappuccino') || 
+                        lowerName.includes('flat white') || lowerName.includes('espresso') || lowerName.includes('mocha') ||
+                        lowerName.includes('americano') || lowerName.includes('tea') || lowerName.includes('juice') ||
+                        lowerName.includes('soda') || lowerName.includes('drink');
+      const isFastFood = lowerName.includes('burger') || lowerName.includes('sandwich') || lowerName.includes('pizza') ||
+                        lowerName.includes('wrap') || lowerName.includes('taco');
+      
+      // Fix incorrect unit assignment from AI
+      if (isBeverage && baseUnit !== 'ml') {
+        baseUnit = 'ml';
+        if (!baseAmount || baseAmount === 1) {
+          if (lowerName.includes('large')) {
+            baseAmount = 350;
+          } else if (lowerName.includes('small')) {
+            baseAmount = 200;
+          } else {
+            baseAmount = 250; // Regular
+          }
+        }
+        console.log('[DEBUG] Corrected beverage baseUnit to ml, baseAmount to', baseAmount);
+      } else if (isFastFood && baseUnit !== 'servings') {
+        baseUnit = 'servings';
+        baseAmount = baseAmount || 1;
+        console.log('[DEBUG] Corrected fast food baseUnit to servings');
+      } else if (!baseUnit) {
+        // If no unit specified and no amount, default to 1 serving (not 100 grams)
+        // Only default to grams if an amount was explicitly mentioned
+        if (baseAmount && baseAmount > 1) {
+          baseUnit = 'grams';
+        } else {
+          baseUnit = 'servings';
+          baseAmount = baseAmount || 1;
+        }
+      } else if (!baseAmount || baseAmount === 1) {
+        if (baseUnit === 'grams') {
+          baseAmount = 100;
+        } else if (baseUnit === 'ml') {
+          baseAmount = 250;
+        } else {
+          baseAmount = 1;
+        }
+      }
+      
+      // For "From Database" mode, we only need name and amount - calories/protein come from database
+      const normalized = {
+        name: food.name || '',
+        baseAmount: baseAmount !== null ? Number(baseAmount) : null,
+        baseUnit: baseUnit || 'grams'
+        // Note: calories and protein are NOT included - they will come from the database when the food is found
+      };
+      console.log('[DEBUG] Normalized food (database search mode):', JSON.stringify(normalized));
+      return normalized;
+    });
+
+    console.log('[DEBUG] Returning', result.length, 'food item(s)');
+    // Return array (even if single item) for consistency
+    res.json(result);
+  } catch (err) {
+    console.error('[ERROR] POST /api/parse-voice-food error', err);
+    console.error('[ERROR] Error stack:', err.stack);
+    res.status(500).json({ error: 'Failed to parse voice input', details: err.message });
+  }
 });
 
 // List foods with optional search
@@ -533,13 +849,22 @@ app.get('/api/current-meal', async (req, res) => {
         cmi.id,
         cmi.food_id as foodId,
         cmi.servings,
+        cmi.temp_food_name as tempFoodName,
+        cmi.temp_food_base_amount as tempFoodBaseAmount,
+        cmi.temp_food_base_unit as tempFoodBaseUnit,
+        cmi.temp_food_calories as tempFoodCalories,
+        cmi.temp_food_protein as tempFoodProtein,
+        CASE 
+          WHEN cmi.food_id IS NULL THEN 1
+          ELSE 0
+        END as isTemporary,
         f.name,
         f.base_amount as baseAmount,
         f.base_unit as baseUnit,
         f.calories,
         f.protein
       FROM CurrentMealItems cmi
-      JOIN Foods f ON cmi.food_id = f.id
+      LEFT JOIN Foods f ON cmi.food_id = f.id
       ORDER BY cmi.id ASC`,
       [],
       (err, items) => {
@@ -548,7 +873,35 @@ app.get('/api/current-meal', async (req, res) => {
           res.status(500).json({ error: 'Failed to fetch current meal' });
           return;
         }
-        res.json(items || []);
+            // Transform to include temporary food data
+        const transformed = items.map(item => {
+          if (item.isTemporary) {
+            return {
+              id: item.id,
+              foodId: null,
+              servings: item.servings,
+              isTemporary: true,
+              name: item.tempFoodName,
+              baseAmount: item.tempFoodBaseAmount,
+              baseUnit: item.tempFoodBaseUnit,
+              calories: item.tempFoodCalories,
+              protein: item.tempFoodProtein,
+            };
+          } else {
+            return {
+              id: item.id,
+              foodId: item.foodId,
+              servings: item.servings,
+              isTemporary: false,
+              name: item.name,
+              baseAmount: item.baseAmount,
+              baseUnit: item.baseUnit,
+              calories: item.calories,
+              protein: item.protein,
+            };
+          }
+        });
+        res.json(transformed || []);
       }
     );
   } catch (err) {
@@ -560,7 +913,66 @@ app.get('/api/current-meal', async (req, res) => {
 // Add item to current meal
 app.post('/api/current-meal/items', async (req, res) => {
   try {
-    const { foodId, servings } = req.body || {};
+    console.log('[DEBUG] POST /api/current-meal/items called');
+    console.log('[DEBUG] Request body:', JSON.stringify(req.body));
+    
+    const { foodId, servings, isTemporary, food } = req.body || {};
+    console.log('[DEBUG] Parsed params - foodId:', foodId, 'servings:', servings, 'isTemporary:', isTemporary, 'food:', JSON.stringify(food));
+    
+    if (isTemporary && food) {
+      console.log('[DEBUG] Processing temporary food');
+      // Handle temporary food
+      const servingsNum = toNumber(servings, 1);
+      if (!servingsNum || servingsNum <= 0) {
+        console.log('[DEBUG] Invalid servings:', servingsNum);
+        return res.status(400).json({ error: 'Invalid servings' });
+      }
+      
+      if (!food.name) {
+        console.log('[DEBUG] Missing food name');
+        return res.status(400).json({ error: 'Missing food name' });
+      }
+      
+      const tempFoodData = [
+        null, // food_id is null for temporary foods
+        servingsNum,
+        food.name,
+        food.baseAmount || 100,
+        food.baseUnit || 'grams',
+        food.calories || 0,
+        food.protein || null,
+      ];
+      console.log('[DEBUG] Inserting temporary food with data:', tempFoodData);
+      
+      // Insert temporary food
+      db.run(
+        `INSERT INTO CurrentMealItems (
+          food_id, servings, temp_food_name, temp_food_base_amount, 
+          temp_food_base_unit, temp_food_calories, temp_food_protein
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        tempFoodData,
+        function(err) {
+          if (err) {
+            console.error('[ERROR] POST /api/current-meal/items temp insert error', err);
+            console.error('[ERROR] Error details:', err.message);
+            console.error('[ERROR] Error code:', err.code);
+            return res.status(500).json({ error: 'Failed to add temporary item' });
+          }
+          console.log('[DEBUG] Temporary food inserted successfully, ID:', this.lastID);
+          updateCurrentMealTimestamp();
+          broadcastMealUpdate();
+          res.status(201).json({ 
+            id: this.lastID, 
+            foodId: null,
+            isTemporary: true,
+            servings: servingsNum 
+          });
+        }
+      );
+      return;
+    }
+    
+    // Handle database food
     if (!foodId || servings === undefined) {
       return res.status(400).json({ error: 'Missing required fields: foodId and servings' });
     }
@@ -715,30 +1127,70 @@ function updateCurrentMealTimestamp() {
 // Helper function to broadcast meal update to all connected clients
 async function broadcastMealUpdate() {
   try {
+    console.log('[DEBUG] broadcastMealUpdate called');
     db.all(
       `SELECT 
         cmi.id,
         cmi.food_id as foodId,
         cmi.servings,
+        cmi.temp_food_name as tempFoodName,
+        cmi.temp_food_base_amount as tempFoodBaseAmount,
+        cmi.temp_food_base_unit as tempFoodBaseUnit,
+        cmi.temp_food_calories as tempFoodCalories,
+        cmi.temp_food_protein as tempFoodProtein,
+        CASE 
+          WHEN cmi.food_id IS NULL THEN 1
+          ELSE 0
+        END as isTemporary,
         f.name,
         f.base_amount as baseAmount,
         f.base_unit as baseUnit,
         f.calories,
         f.protein
       FROM CurrentMealItems cmi
-      JOIN Foods f ON cmi.food_id = f.id
+      LEFT JOIN Foods f ON cmi.food_id = f.id
       ORDER BY cmi.id ASC`,
       [],
       (err, items) => {
         if (err) {
-          console.error('Error fetching meal for broadcast', err);
+          console.error('[ERROR] Error fetching meal for broadcast', err);
           return;
         }
-        io.emit('meal-updated', items || []);
+        // Transform to include temporary food data (same as GET endpoint)
+        const transformed = items.map(item => {
+          if (item.isTemporary) {
+            return {
+              id: item.id,
+              foodId: null,
+              servings: item.servings,
+              isTemporary: true,
+              name: item.tempFoodName,
+              baseAmount: item.tempFoodBaseAmount,
+              baseUnit: item.tempFoodBaseUnit,
+              calories: item.tempFoodCalories,
+              protein: item.tempFoodProtein,
+            };
+          } else {
+            return {
+              id: item.id,
+              foodId: item.foodId,
+              servings: item.servings,
+              isTemporary: false,
+              name: item.name,
+              baseAmount: item.baseAmount,
+              baseUnit: item.baseUnit,
+              calories: item.calories,
+              protein: item.protein,
+            };
+          }
+        });
+        console.log('[DEBUG] Broadcasting meal-updated event with', transformed.length, 'items');
+        console.log('[DEBUG] Transformed items:', JSON.stringify(transformed));
+        io.emit('meal-updated', transformed || []);
       }
     );
   } catch (err) {
-    console.error('Error broadcasting meal update', err);
+    console.error('[ERROR] Error broadcasting meal update', err);
   }
 }
 

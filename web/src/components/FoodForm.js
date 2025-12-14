@@ -73,8 +73,10 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete, onSaveA
       setSaving(true);
       setError("");
       const payload = { name, baseAmount: Number(baseAmount), baseUnit, calories: Number(calories), protein: Number(protein) };
-      const res = await fetch(initial ? `${API}/api/foods/${initial.id}` : `${API}/api/foods`, {
-        method: initial ? 'PUT' : 'POST',
+      // Only treat as edit if initial has an id
+      const isEdit = initial?.id != null;
+      const res = await fetch(isEdit ? `${API}/api/foods/${initial.id}` : `${API}/api/foods`, {
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -94,8 +96,10 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete, onSaveA
       setSaving(true);
       setError("");
       const payload = { name, baseAmount: Number(baseAmount), baseUnit, calories: Number(calories), protein: Number(protein) };
-      const res = await fetch(initial ? `${API}/api/foods/${initial.id}` : `${API}/api/foods`, {
-        method: initial ? 'PUT' : 'POST',
+      // Only treat as edit if initial has an id
+      const isEdit = initial?.id != null;
+      const res = await fetch(isEdit ? `${API}/api/foods/${initial.id}` : `${API}/api/foods`, {
+        method: isEdit ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
@@ -113,12 +117,15 @@ export default function FoodForm({ initial, onCancel, onSaved, onDelete, onSaveA
     }
   }
 
+
   return (
     <Card className="card mt-4">
       <CardBody className="card-pad">
-        <h3 className="heading-2" style={{ marginBottom: 12 }}>
-          {initial ? 'Edit Food' : 'Add Food'}
-        </h3>
+        <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+          <h3 className="heading-2" style={{ margin: 0 }}>
+            {initial ? 'Edit Food' : 'Add Food'}
+          </h3>
+        </div>
         {error && <div className="text-red-500 text-sm" style={{ marginBottom: 12 }}>{error}</div>}
         
         <form onSubmit={onSubmit} className="space-y-4">
