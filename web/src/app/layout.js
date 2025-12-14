@@ -6,7 +6,6 @@ export const metadata = {
   title: 'Calorie Assistant',
   description: 'Simple calorie and protein tracker',
   manifest: '/manifest.json',
-  themeColor: '#236a4d',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
