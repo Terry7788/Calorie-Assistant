@@ -48,6 +48,11 @@ export default function VoiceInputModal({ isOpen, onClose, onFoodParsed, buttonP
 
   useEffect(() => {
     if (!isOpen && !isClosing) return;
+    
+    // Check if we're in the browser (client-side)
+    if (typeof window === 'undefined') {
+      return;
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -220,12 +225,17 @@ export default function VoiceInputModal({ isOpen, onClose, onFoodParsed, buttonP
     }
   }
 
-  // Calculate animation values
-  const centerX = buttonPosition.x || window.innerWidth / 2;
-  const centerY = buttonPosition.y || window.innerHeight / 2;
+  // Calculate animation values (only on client-side)
+  const centerX = buttonPosition.x || (typeof window !== 'undefined' ? window.innerWidth / 2 : 0);
+  const centerY = buttonPosition.y || (typeof window !== 'undefined' ? window.innerHeight / 2 : 0);
   const initialSize = Math.max(buttonPosition.width || 40, buttonPosition.height || 40);
-  const screenDiagonal = Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2);
+  const screenDiagonal = typeof window !== 'undefined' 
+    ? Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2)
+    : 2000; // Fallback for SSR
 
+  // Don't render on server-side
+  if (typeof window === 'undefined') return null;
+  
   if (!isOpen && !isClosing) return null;
 
   return (

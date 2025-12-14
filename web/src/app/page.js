@@ -8,7 +8,11 @@ import FoodForm from "../components/FoodForm";
 import MealItemCard from "../components/MealItemCard";
 import HamburgerButton from "../components/HamburgerButton";
 import SaveMealModal from "../components/SaveMealModal";
-import VoiceInputButton from "../components/VoiceInputButton";
+import dynamic from "next/dynamic";
+
+const VoiceInputButton = dynamic(() => import("../components/VoiceInputButton"), {
+  ssr: false,
+});
 
 export default function HomePage() {
   const [foods, setFoods] = useState([]);
