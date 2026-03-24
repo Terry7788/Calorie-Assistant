@@ -13,6 +13,7 @@ export default function Sidebar() {
     { label: "Food Database", path: "/" },
     { label: "Saved Meals", path: "/saved-meals" },
     { label: "Step Counter", path: "/step-counter" },
+    { label: "Gym Tracker", path: "/gym" },
   ];
 
   function handleNavigation(path) {
@@ -25,19 +26,19 @@ export default function Sidebar() {
       {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40"
+          className="fixed inset-0 bg-black/20 z-40"
           onClick={() => setIsOpen(false)}
         />
       )}
 
       {/* Sidebar */}
       <div
-        className={`fixed top-0 left-0 h-full w-64 bg-white z-40 transform transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 left-0 h-full w-64 z-40 transform transition-transform duration-300 ease-in-out ${
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
         style={{
-          boxShadow: isOpen ? "2px 0 8px rgba(0,0,0,0.1)" : "none",
-          borderRight: "1px solid var(--border, #e5e7eb)",
+          backgroundColor: "var(--bg-100)",
+          borderRight: "1px solid var(--bg-300)",
         }}
       >
         <div style={{ padding: "16px" }}>
@@ -79,12 +80,12 @@ export default function Sidebar() {
                   onClick={() => handleNavigation(item.path)}
                   className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
                     isActive
-                      ? "bg-green-100 text-green-800 font-semibold"
-                      : "hover:bg-gray-100 text-gray-700"
+                      ? "font-semibold"
+                      : "hover:bg-gray-100"
                   }`}
                   style={{
-                    backgroundColor: isActive ? "var(--accent-light, #d6f5e7)" : "transparent",
-                    color: isActive ? "var(--accent-dark, #236a4d)" : "var(--text, #1a1a1a)",
+                    backgroundColor: isActive ? "var(--accent-100, #d4eaf7)" : "transparent",
+                    color: isActive ? "var(--accent-200, #00668c)" : "var(--text-100, #1d1c1c)",
                   }}
                 >
                   {item.label}

@@ -26,6 +26,9 @@ export default function HomePage() {
   const [mealItems, setMealItems] = useState([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
+  const [showSavedMealsModal, setShowSavedMealsModal] = useState(false);
+  const [savedMeals, setSavedMeals] = useState([]);
+  const [loadingSavedMeals, setLoadingSavedMeals] = useState(false);
   const [loadingMeal, setLoadingMeal] = useState(true);
   const searchTimeoutRef = useRef(null);
 
@@ -175,6 +178,45 @@ export default function HomePage() {
     } finally {
       setLoadingMeal(false);
     }
+  }
+
+  async function loadSavedMeals() {
+    try {
+      setLoadingSavedMeals(true);
+      const res = await fetch(`${API}/api/saved-meals`);
+      const data = await res.json();
+      setSavedMeals(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Failed to load saved meals", e);
+    } finally {
+      setLoadingSavedMeals(false);
+    }
+  }
+
+  async function addSavedMealToCurrentMeal(meal) {
+    try {
+      // Load the meal detail to get items
+      const res = await fetch(`${API}/api/saved-meals/${meal.id}`);
+      const mealDetail = await res.json();
+      
+      if (mealDetail.items && mealDetail.items.length > 0) {
+        for (const item of mealDetail.items) {
+          await fetch(`${API}/api/current-meal/items`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ foodId: item.foodId, servings: item.servings }),
+          });
+        }
+      }
+      setShowSavedMealsModal(false);
+    } catch (e) {
+      console.error("Failed to add saved meal", e);
+    }
+  }
+
+  function openSavedMealsModal() {
+    loadSavedMeals();
+    setShowSavedMealsModal(true);
   }
 
   // No client-side filtering needed - server handles it
@@ -517,6 +559,14 @@ export default function HomePage() {
             <h2 className="heading-2" style={{ margin: 0 }}>Current meal</h2>
             <div className="flex gap-2">
               <Button 
+                className="btn btn-ghost"
+                size="sm"
+                onClick={openSavedMealsModal}
+                aria-label="Add from saved meals"
+              >
+                + Saved
+              </Button>
+              <Button 
                 className="btn btn-soft"
                 size="sm"
                 onClick={() => setShowClearModal(true)}
@@ -586,6 +636,62 @@ export default function HomePage() {
               size="sm"
             >
               Clear
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={showSavedMealsModal}
+        onClose={() => setShowSavedMealsModal(false)}
+        size="lg"
+        classNames={{
+          base: "max-w-[500px] max-h-[80vh]",
+          wrapper: "!items-start !pt-8",
+        }}
+      >
+        <ModalContent>
+          <ModalHeader>Add Saved Meal</ModalHeader>
+          <ModalBody>
+            {loadingSavedMeals ? (
+              <div className="text-center text-muted">Loading...</div>
+            ) : savedMeals.length === 0 ? (
+              <div className="text-center text-muted" style={{ padding: "20px" }}>
+                No saved meals yet. Save a meal from your current meal to see it here.
+              </div>
+            ) : (
+              <div className="space-y-2" style={{ maxHeight: "400px", overflowY: "auto" }}>
+                {savedMeals.map((meal) => (
+                  <div
+                    key={meal.id}
+                    className="card card-pad cursor-pointer"
+                    onClick={() => addSavedMealToCurrentMeal(meal)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="font-semibold">{meal.name}</div>
+                        <div className="text-sm text-muted">
+                          {meal.itemCount || 0} items · {meal.totalCalories?.toFixed(0) || 0} cal
+                          {meal.totalProtein ? ` · ${meal.totalProtein.toFixed(1)}g protein` : ''}
+                        </div>
+                      </div>
+                      <Button size="sm" variant="light" className="text-accent">
+                        Add
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button 
+              className="btn btn-ghost" 
+              onClick={() => setShowSavedMealsModal(false)}
+              size="sm"
+            >
+              Close
             </Button>
           </ModalFooter>
         </ModalContent>

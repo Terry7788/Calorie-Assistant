@@ -17,6 +17,21 @@ export default function SaveMealModal({ isOpen, onClose, mealItems, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Calculate totals
+  let totalCal = 0;
+  let totalProt = 0;
+  if (mealItems && mealItems.length > 0) {
+    for (let i = 0; i < mealItems.length; i++) {
+      const item = mealItems[i];
+      if (item && item.food) {
+        const mult = parseFloat(item.servings) || 1;
+        totalCal += (parseFloat(item.food.calories) || 0) * mult;
+        totalProt += (parseFloat(item.food.protein) || 0) * mult;
+      }
+    }
+  }
+  const totals = { calories: totalCal, protein: totalProt };
+
   async function handleSave() {
     if (!name.trim()) {
       setError("Please enter a meal name");
@@ -68,7 +83,15 @@ export default function SaveMealModal({ isOpen, onClose, mealItems, onSaved }) {
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="sm">
+    <Modal 
+      isOpen={isOpen} 
+      onClose={handleClose} 
+      size="sm"
+      classNames={{
+        base: "max-w-[420px] max-h-[300px]",
+        wrapper: "!items-start !pt-8",
+      }}
+    >
       <ModalContent>
         <ModalHeader>Save Meal</ModalHeader>
         <ModalBody>
@@ -86,8 +109,17 @@ export default function SaveMealModal({ isOpen, onClose, mealItems, onSaved }) {
           {error && (
             <div className="text-red-500 text-sm">{error}</div>
           )}
-          <div className="text-sm text-muted">
-            This meal contains {mealItems.length} item{mealItems.length !== 1 ? 's' : ''}
+          <div 
+            className="summary-pill" 
+            style={{ 
+              marginTop: 12, 
+              width: '100%', 
+              justifyContent: 'center',
+              background: 'var(--primary-100)',
+              color: 'var(--accent-200)'
+            }}
+          >
+            {totals.calories.toFixed(0)} cal · {totals.protein.toFixed(1)}g protein
           </div>
         </ModalBody>
         <ModalFooter>
