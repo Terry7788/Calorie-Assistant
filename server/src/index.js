@@ -6,8 +6,6 @@ import { promisify } from 'util';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import OpenAI from 'openai';
-import { logger, safeStringify } from './logger.js';
-import { SEED_FOODS } from '../seed-foods.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -18,7 +16,7 @@ const io = new Server(httpServer, {
     credentials: false,
   },
 });
-const PORT = process.env.PORT || 4001;
+const PORT = 4000;
 
 app.use(express.json());
 
@@ -48,8 +46,6 @@ async function initDatabase() {
         reject(err);
         return;
       }
-
-      db.run('PRAGMA foreign_keys = ON');
       
       // Create Foods table
       db.run(`
@@ -262,104 +258,6 @@ function toNumber(value, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function dbRunAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
-}
-
-function dbAllAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows || []);
-    });
-  });
-}
-
-function dbGetAsync(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row || null);
-    });
-  });
-}
-
-async function ensureGymTables() {
-  await dbRunAsync(`
-    CREATE TABLE IF NOT EXISTS GymExercises (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      muscle_group TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await dbRunAsync(`
-    CREATE TABLE IF NOT EXISTS GymSessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  const gymSessionColumns = await dbAllAsync(`PRAGMA table_info(GymSessions)`);
-  const hasStatusColumn = gymSessionColumns.some((col) => col.name === 'status');
-  if (!hasStatusColumn) {
-    await dbRunAsync(`ALTER TABLE GymSessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`);
-  }
-
-  await dbRunAsync(`
-    CREATE TABLE IF NOT EXISTS GymSessionExercises (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id INTEGER NOT NULL,
-      exercise_id INTEGER NOT NULL,
-      exercise_order INTEGER NOT NULL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (session_id) REFERENCES GymSessions(id) ON DELETE CASCADE,
-      FOREIGN KEY (exercise_id) REFERENCES GymExercises(id) ON DELETE CASCADE
-    )
-  `);
-
-  await dbRunAsync(`
-    CREATE TABLE IF NOT EXISTS GymSets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_exercise_id INTEGER NOT NULL,
-      set_number INTEGER NOT NULL,
-      weight_kg REAL,
-      reps INTEGER,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (session_exercise_id) REFERENCES GymSessionExercises(id) ON DELETE CASCADE
-    )
-  `);
-
-  const seedExercises = [
-    ['Bench Press', 'Chest'],
-    ['Incline Dumbbell Press', 'Chest'],
-    ['Shoulder Press', 'Shoulders'],
-    ['Lat Pulldown', 'Back'],
-    ['Barbell Row', 'Back'],
-    ['Bicep Curl', 'Arms'],
-    ['Tricep Pushdown', 'Arms'],
-    ['Squat', 'Legs'],
-    ['Leg Press', 'Legs'],
-    ['Romanian Deadlift', 'Legs'],
-  ];
-
-  for (const [name, muscleGroup] of seedExercises) {
-    await dbRunAsync(
-      `INSERT OR IGNORE INTO GymExercises (name, muscle_group) VALUES (?, ?)`,
-      [name, muscleGroup]
-    );
-  }
-}
-
 // Initialize OpenAI client
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -373,19 +271,19 @@ app.get('/api/health', (_req, res) => {
 // Parse voice input using GPT-4o-mini
 app.post('/api/parse-voice-food', async (req, res) => {
   try {
-    logger.log('[DEBUG] POST /api/parse-voice-food called');
-    logger.log('[DEBUG] Request body:', safeStringify(req.body));
+    console.log('[DEBUG] POST /api/parse-voice-food called');
+    console.log('[DEBUG] Request body:', JSON.stringify(req.body));
     
     if (!openai) {
-      logger.log('[DEBUG] OpenAI not configured');
+      console.log('[DEBUG] OpenAI not configured');
       return res.status(500).json({ error: 'OpenAI API key not configured' });
     }
 
     const { text } = req.body || {};
-    logger.log('[DEBUG] Text received:', text);
+    console.log('[DEBUG] Text received:', text);
     
     if (!text || typeof text !== 'string') {
-      logger.log('[DEBUG] Invalid text parameter');
+      console.log('[DEBUG] Invalid text parameter');
       return res.status(400).json({ error: 'Missing or invalid text parameter' });
     }
 
@@ -479,7 +377,7 @@ Return JSON only:`;
 
     // Check if it's a change command
     if (parsed.command === 'change' && parsed.from && parsed.to) {
-      logger.log('[DEBUG] Detected change command:', parsed);
+      console.log('[DEBUG] Detected change command:', parsed);
       res.json({
         command: 'change',
         from: parsed.from,
@@ -490,7 +388,7 @@ Return JSON only:`;
 
     // Normalize to array format for regular food entries
     const foods = Array.isArray(parsed) ? parsed : [parsed];
-    logger.log('[DEBUG] Processing', foods.length, 'food item(s)');
+    console.log('[DEBUG] Processing', foods.length, 'food item(s)');
 
     // Validate and normalize each food item (for database search, we only need name and amount)
     const result = foods.map(food => {
@@ -520,11 +418,11 @@ Return JSON only:`;
             baseAmount = 250; // Regular
           }
         }
-        logger.log('[DEBUG] Corrected beverage baseUnit to ml, baseAmount to', baseAmount);
+        console.log('[DEBUG] Corrected beverage baseUnit to ml, baseAmount to', baseAmount);
       } else if (isFastFood && baseUnit !== 'servings') {
         baseUnit = 'servings';
         baseAmount = baseAmount || 1;
-        logger.log('[DEBUG] Corrected fast food baseUnit to servings');
+        console.log('[DEBUG] Corrected fast food baseUnit to servings');
       } else if (!baseUnit) {
         // If no unit specified and no amount, default to 1 serving (not 100 grams)
         // Only default to grams if an amount was explicitly mentioned
@@ -551,16 +449,16 @@ Return JSON only:`;
         baseUnit: baseUnit || 'grams'
         // Note: calories and protein are NOT included - they will come from the database when the food is found
       };
-      logger.log('[DEBUG] Normalized food (database search mode):', JSON.stringify(normalized));
+      console.log('[DEBUG] Normalized food (database search mode):', JSON.stringify(normalized));
       return normalized;
     });
 
-    logger.log('[DEBUG] Returning', result.length, 'food item(s)');
+    console.log('[DEBUG] Returning', result.length, 'food item(s)');
     // Return array (even if single item) for consistency
     res.json(result);
   } catch (err) {
-    logger.error('[ERROR] POST /api/parse-voice-food error', err);
-    logger.error('[ERROR] Error stack:', err.stack);
+    console.error('[ERROR] POST /api/parse-voice-food error', err);
+    console.error('[ERROR] Error stack:', err.stack);
     res.status(500).json({ error: 'Failed to parse voice input', details: err.message });
   }
 });
@@ -580,14 +478,14 @@ app.get('/api/foods', async (req, res) => {
 
     db.all(query, params, (err, rows) => {
       if (err) {
-        logger.error('GET /api/foods error', err);
+        console.error('GET /api/foods error', err);
         res.status(500).json({ error: 'Failed to fetch foods' });
         return;
       }
       res.json(rows || []);
     });
   } catch (err) {
-    logger.error('GET /api/foods error', err);
+    console.error('GET /api/foods error', err);
     res.status(500).json({ error: 'Failed to fetch foods' });
   }
 });
@@ -613,7 +511,7 @@ app.post('/api/foods', async (req, res) => {
       [name, baseAmountNum, baseUnit, caloriesNum, proteinNum],
       function(err) {
         if (err) {
-          logger.error('POST /api/foods error', err);
+          console.error('POST /api/foods error', err);
           res.status(500).json({ error: 'Failed to create food' });
           return;
         }
@@ -624,7 +522,7 @@ app.post('/api/foods', async (req, res) => {
           [this.lastID],
           (err, row) => {
             if (err) {
-              logger.error('Error fetching created food', err);
+              console.error('Error fetching created food', err);
               res.status(500).json({ error: 'Failed to fetch created food' });
               return;
             }
@@ -636,7 +534,7 @@ app.post('/api/foods', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('POST /api/foods error', err);
+    console.error('POST /api/foods error', err);
     res.status(500).json({ error: 'Failed to create food' });
   }
 });
@@ -689,7 +587,7 @@ app.put('/api/foods/:id', async (req, res) => {
       params,
       function(err) {
         if (err) {
-          logger.error('PUT /api/foods/:id error', err);
+          console.error('PUT /api/foods/:id error', err);
           res.status(500).json({ error: 'Failed to update food' });
           return;
         }
@@ -705,7 +603,7 @@ app.put('/api/foods/:id', async (req, res) => {
           [id],
           (err, row) => {
             if (err) {
-              logger.error('Error fetching updated food', err);
+              console.error('Error fetching updated food', err);
               res.status(500).json({ error: 'Failed to fetch updated food' });
               return;
             }
@@ -717,7 +615,7 @@ app.put('/api/foods/:id', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('PUT /api/foods/:id error', err);
+    console.error('PUT /api/foods/:id error', err);
     res.status(500).json({ error: 'Failed to update food' });
   }
 });
@@ -730,7 +628,7 @@ app.delete('/api/foods/:id', async (req, res) => {
     
     db.run('DELETE FROM Foods WHERE id = ?', [id], function(err) {
       if (err) {
-        logger.error('DELETE /api/foods/:id error', err);
+        console.error('DELETE /api/foods/:id error', err);
         res.status(500).json({ error: 'Failed to delete food' });
         return;
       }
@@ -745,7 +643,7 @@ app.delete('/api/foods/:id', async (req, res) => {
       res.status(204).send();
     });
   } catch (err) {
-    logger.error('DELETE /api/foods/:id error', err);
+    console.error('DELETE /api/foods/:id error', err);
     res.status(500).json({ error: 'Failed to delete food' });
   }
 });
@@ -779,14 +677,14 @@ app.get('/api/saved-meals', async (req, res) => {
 
     db.all(query, params, (err, rows) => {
       if (err) {
-        logger.error('GET /api/saved-meals error', err);
+        console.error('GET /api/saved-meals error', err);
         res.status(500).json({ error: 'Failed to fetch saved meals' });
         return;
       }
       res.json(rows || []);
     });
   } catch (err) {
-    logger.error('GET /api/saved-meals error', err);
+    console.error('GET /api/saved-meals error', err);
     res.status(500).json({ error: 'Failed to fetch saved meals' });
   }
 });
@@ -803,7 +701,7 @@ app.get('/api/saved-meals/:id', async (req, res) => {
       [id],
       (err, meal) => {
         if (err) {
-          logger.error('GET /api/saved-meals/:id error', err);
+          console.error('GET /api/saved-meals/:id error', err);
           res.status(500).json({ error: 'Failed to fetch meal' });
           return;
         }
@@ -830,7 +728,7 @@ app.get('/api/saved-meals/:id', async (req, res) => {
           [id],
           (err, items) => {
             if (err) {
-              logger.error('GET /api/saved-meals/:id items error', err);
+              console.error('GET /api/saved-meals/:id items error', err);
               res.status(500).json({ error: 'Failed to fetch meal items' });
               return;
             }
@@ -844,7 +742,7 @@ app.get('/api/saved-meals/:id', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('GET /api/saved-meals/:id error', err);
+    console.error('GET /api/saved-meals/:id error', err);
     res.status(500).json({ error: 'Failed to fetch saved meal' });
   }
 });
@@ -864,7 +762,7 @@ app.post('/api/saved-meals', async (req, res) => {
       [name],
       function(err) {
         if (err) {
-          logger.error('POST /api/saved-meals error', err);
+          console.error('POST /api/saved-meals error', err);
           res.status(500).json({ error: 'Failed to create meal' });
           return;
         }
@@ -880,7 +778,7 @@ app.post('/api/saved-meals', async (req, res) => {
           values,
           (err) => {
             if (err) {
-              logger.error('POST /api/saved-meals items error', err);
+              console.error('POST /api/saved-meals items error', err);
               // Rollback meal creation
               db.run('DELETE FROM SavedMeals WHERE id = ?', [mealId]);
               res.status(500).json({ error: 'Failed to create meal items' });
@@ -898,7 +796,7 @@ app.post('/api/saved-meals', async (req, res) => {
               [mealId],
               (err, meal) => {
                 if (err) {
-                  logger.error('Error fetching created meal', err);
+                  console.error('Error fetching created meal', err);
                   res.status(500).json({ error: 'Failed to fetch created meal' });
                   return;
                 }
@@ -910,7 +808,7 @@ app.post('/api/saved-meals', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('POST /api/saved-meals error', err);
+    console.error('POST /api/saved-meals error', err);
     res.status(500).json({ error: 'Failed to create saved meal' });
   }
 });
@@ -923,7 +821,7 @@ app.delete('/api/saved-meals/:id', async (req, res) => {
     
     db.run('DELETE FROM SavedMeals WHERE id = ?', [id], function(err) {
       if (err) {
-        logger.error('DELETE /api/saved-meals/:id error', err);
+        console.error('DELETE /api/saved-meals/:id error', err);
         res.status(500).json({ error: 'Failed to delete meal' });
         return;
       }
@@ -936,7 +834,7 @@ app.delete('/api/saved-meals/:id', async (req, res) => {
       res.status(204).send();
     });
   } catch (err) {
-    logger.error('DELETE /api/saved-meals/:id error', err);
+    console.error('DELETE /api/saved-meals/:id error', err);
     res.status(500).json({ error: 'Failed to delete saved meal' });
   }
 });
@@ -971,7 +869,7 @@ app.get('/api/current-meal', async (req, res) => {
       [],
       (err, items) => {
         if (err) {
-          logger.error('GET /api/current-meal error', err);
+          console.error('GET /api/current-meal error', err);
           res.status(500).json({ error: 'Failed to fetch current meal' });
           return;
         }
@@ -1007,7 +905,7 @@ app.get('/api/current-meal', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('GET /api/current-meal error', err);
+    console.error('GET /api/current-meal error', err);
     res.status(500).json({ error: 'Failed to fetch current meal' });
   }
 });
@@ -1015,23 +913,23 @@ app.get('/api/current-meal', async (req, res) => {
 // Add item to current meal
 app.post('/api/current-meal/items', async (req, res) => {
   try {
-    logger.log('[DEBUG] POST /api/current-meal/items called');
-    logger.log('[DEBUG] Request body:', safeStringify(req.body));
+    console.log('[DEBUG] POST /api/current-meal/items called');
+    console.log('[DEBUG] Request body:', JSON.stringify(req.body));
     
     const { foodId, servings, isTemporary, food } = req.body || {};
-    logger.log('[DEBUG] Parsed params - foodId:', foodId, 'servings:', servings, 'isTemporary:', isTemporary, 'food:', JSON.stringify(food));
+    console.log('[DEBUG] Parsed params - foodId:', foodId, 'servings:', servings, 'isTemporary:', isTemporary, 'food:', JSON.stringify(food));
     
     if (isTemporary && food) {
-      logger.log('[DEBUG] Processing temporary food');
+      console.log('[DEBUG] Processing temporary food');
       // Handle temporary food
       const servingsNum = toNumber(servings, 1);
       if (!servingsNum || servingsNum <= 0) {
-        logger.log('[DEBUG] Invalid servings:', servingsNum);
+        console.log('[DEBUG] Invalid servings:', servingsNum);
         return res.status(400).json({ error: 'Invalid servings' });
       }
       
       if (!food.name) {
-        logger.log('[DEBUG] Missing food name');
+        console.log('[DEBUG] Missing food name');
         return res.status(400).json({ error: 'Missing food name' });
       }
       
@@ -1044,7 +942,7 @@ app.post('/api/current-meal/items', async (req, res) => {
         food.calories || 0,
         food.protein || null,
       ];
-      logger.log('[DEBUG] Inserting temporary food with data:', tempFoodData);
+      console.log('[DEBUG] Inserting temporary food with data:', tempFoodData);
       
       // Insert temporary food
       db.run(
@@ -1055,27 +953,12 @@ app.post('/api/current-meal/items', async (req, res) => {
         tempFoodData,
         function(err) {
           if (err) {
-            logger.error('[ERROR] POST /api/current-meal/items temp insert error', err);
-            logger.error('[ERROR] Error details:', err.message);
-            logger.error('[ERROR] Error code:', err.code);
+            console.error('[ERROR] POST /api/current-meal/items temp insert error', err);
+            console.error('[ERROR] Error details:', err.message);
+            console.error('[ERROR] Error code:', err.code);
             return res.status(500).json({ error: 'Failed to add temporary item' });
           }
-          logger.log('[DEBUG] Temporary food inserted successfully, ID:', this.lastID);
-          
-          // Also create a SavedMeal entry for temporary food
-          const calories = food.calories || 0;
-          const protein = food.protein || null;
-          const mealName = `${food.name} (${Math.round(calories)}kcal ${protein ? Math.round(protein) + 'g protein' : ''})`;
-          db.run(
-            'INSERT INTO SavedMeals (name) VALUES (?)',
-            [mealName],
-            (err) => {
-              if (!err) {
-                logger.log('[DEBUG] Auto-created SavedMeal for temp food:', mealName);
-              }
-            }
-          );
-          
+          console.log('[DEBUG] Temporary food inserted successfully, ID:', this.lastID);
           updateCurrentMealTimestamp();
           broadcastMealUpdate();
           res.status(201).json({ 
@@ -1112,7 +995,7 @@ app.post('/api/current-meal/items', async (req, res) => {
         [foodIdNum],
         (err, existing) => {
           if (err) {
-            logger.error('POST /api/current-meal/items error', err);
+            console.error('POST /api/current-meal/items error', err);
             return res.status(500).json({ error: 'Failed to check existing item' });
           }
 
@@ -1123,7 +1006,7 @@ app.post('/api/current-meal/items', async (req, res) => {
               [servingsNum, foodIdNum],
               function(err) {
                 if (err) {
-                  logger.error('POST /api/current-meal/items update error', err);
+                  console.error('POST /api/current-meal/items update error', err);
                   return res.status(500).json({ error: 'Failed to update item' });
                 }
                 updateCurrentMealTimestamp();
@@ -1138,27 +1021,9 @@ app.post('/api/current-meal/items', async (req, res) => {
               [foodIdNum, servingsNum],
               function(err) {
                 if (err) {
-                  logger.error('POST /api/current-meal/items insert error', err);
+                  console.error('POST /api/current-meal/items insert error', err);
                   return res.status(500).json({ error: 'Failed to add item' });
                 }
-                
-                // Also create a SavedMeal entry with this food's nutrition info
-                db.get('SELECT name, calories, protein FROM Foods WHERE id = ?', [foodIdNum], (err, food) => {
-                  if (food) {
-                    // Create saved meal with nutrition info in the name
-                    const mealName = `${food.name} (${Math.round(food.calories)}kcal ${food.protein ? Math.round(food.protein) + 'g protein' : ''})`;
-                    db.run(
-                      'INSERT INTO SavedMeals (name) VALUES (?)',
-                      [mealName],
-                      (err) => {
-                        if (!err) {
-                          logger.log('[DEBUG] Auto-created SavedMeal:', mealName);
-                        }
-                      }
-                    );
-                  }
-                });
-                
                 updateCurrentMealTimestamp();
                 broadcastMealUpdate();
                 res.status(201).json({ id: this.lastID, foodId: foodIdNum, servings: servingsNum });
@@ -1169,7 +1034,7 @@ app.post('/api/current-meal/items', async (req, res) => {
       );
     });
   } catch (err) {
-    logger.error('POST /api/current-meal/items error', err);
+    console.error('POST /api/current-meal/items error', err);
     res.status(500).json({ error: 'Failed to add item to current meal' });
   }
 });
@@ -1191,7 +1056,7 @@ app.put('/api/current-meal/items/:id', async (req, res) => {
       [servingsNum, id],
       function(err) {
         if (err) {
-          logger.error('PUT /api/current-meal/items/:id error', err);
+          console.error('PUT /api/current-meal/items/:id error', err);
           return res.status(500).json({ error: 'Failed to update item' });
         }
         
@@ -1205,7 +1070,7 @@ app.put('/api/current-meal/items/:id', async (req, res) => {
       }
     );
   } catch (err) {
-    logger.error('PUT /api/current-meal/items/:id error', err);
+    console.error('PUT /api/current-meal/items/:id error', err);
     res.status(500).json({ error: 'Failed to update item' });
   }
 });
@@ -1218,7 +1083,7 @@ app.delete('/api/current-meal/items/:id', async (req, res) => {
     
     db.run('DELETE FROM CurrentMealItems WHERE id = ?', [id], function(err) {
       if (err) {
-        logger.error('DELETE /api/current-meal/items/:id error', err);
+        console.error('DELETE /api/current-meal/items/:id error', err);
         return res.status(500).json({ error: 'Failed to delete item' });
       }
       
@@ -1231,7 +1096,7 @@ app.delete('/api/current-meal/items/:id', async (req, res) => {
       res.status(204).send();
     });
   } catch (err) {
-    logger.error('DELETE /api/current-meal/items/:id error', err);
+    console.error('DELETE /api/current-meal/items/:id error', err);
     res.status(500).json({ error: 'Failed to delete item' });
   }
 });
@@ -1241,7 +1106,7 @@ app.delete('/api/current-meal', async (req, res) => {
   try {
     db.run('DELETE FROM CurrentMealItems', [], function(err) {
       if (err) {
-        logger.error('DELETE /api/current-meal error', err);
+        console.error('DELETE /api/current-meal error', err);
         return res.status(500).json({ error: 'Failed to clear meal' });
       }
       updateCurrentMealTimestamp();
@@ -1249,277 +1114,8 @@ app.delete('/api/current-meal', async (req, res) => {
       res.status(204).send();
     });
   } catch (err) {
-    logger.error('DELETE /api/current-meal error', err);
+    console.error('DELETE /api/current-meal error', err);
     res.status(500).json({ error: 'Failed to clear meal' });
-  }
-});
-
-// Gym Routes
-
-// Create gym session
-app.post('/api/gym/sessions', async (req, res) => {
-  try {
-    const { name } = req.body || {};
-    const created = await dbRunAsync('INSERT INTO GymSessions (name) VALUES (?)', [name || null]);
-    const session = await dbGetAsync(
-      `SELECT id, name, status, started_at as startedAt, created_at as createdAt
-       FROM GymSessions
-       WHERE id = ?`,
-      [created.lastID]
-    );
-    res.status(201).json(session);
-  } catch (err) {
-    logger.error('POST /api/gym/sessions error', err);
-    res.status(500).json({ error: 'Failed to create session' });
-  }
-});
-
-// List gym sessions
-app.get('/api/gym/sessions', async (_req, res) => {
-  try {
-    const rows = await dbAllAsync(`
-      SELECT
-        gs.id,
-        gs.name,
-        gs.status,
-        gs.started_at as startedAt,
-        gs.created_at as createdAt,
-        COUNT(DISTINCT gse.id) as exerciseCount,
-        COUNT(DISTINCT gset.id) as setCount
-      FROM GymSessions gs
-      LEFT JOIN GymSessionExercises gse ON gse.session_id = gs.id
-      LEFT JOIN GymSets gset ON gset.session_exercise_id = gse.id
-      GROUP BY gs.id
-      ORDER BY gs.started_at DESC, gs.id DESC
-    `);
-    res.json(rows);
-  } catch (err) {
-    logger.error('GET /api/gym/sessions error', err);
-    res.status(500).json({ error: 'Failed to list sessions' });
-  }
-});
-
-// Get session detail with exercises + sets + previous session values per set number
-app.get('/api/gym/sessions/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
-
-    const session = await dbGetAsync(
-      `SELECT id, name, status, started_at as startedAt, created_at as createdAt
-       FROM GymSessions
-       WHERE id = ?`,
-      [id]
-    );
-    if (!session) return res.status(404).json({ error: 'Not found' });
-
-    const exercises = await dbAllAsync(`
-      SELECT
-        gse.id,
-        gse.session_id as sessionId,
-        gse.exercise_id as exerciseId,
-        gse.exercise_order as exerciseOrder,
-        ge.name as exerciseName,
-        ge.muscle_group as muscleGroup
-      FROM GymSessionExercises gse
-      JOIN GymExercises ge ON ge.id = gse.exercise_id
-      WHERE gse.session_id = ?
-      ORDER BY gse.exercise_order ASC, gse.id ASC
-    `, [id]);
-
-    const hydrated = [];
-    for (const ex of exercises) {
-      const sets = await dbAllAsync(
-        `SELECT id, session_exercise_id as sessionExerciseId, set_number as setNumber, weight_kg as weightKg, reps
-         FROM GymSets
-         WHERE session_exercise_id = ?
-         ORDER BY set_number ASC`,
-        [ex.id]
-      );
-
-      const prevRows = await dbAllAsync(
-        `SELECT
-          gs2.id as sessionId,
-          gset2.set_number as setNumber,
-          gset2.weight_kg as weightKg,
-          gset2.reps,
-          gs2.started_at as startedAt
-         FROM GymSessionExercises gse2
-         JOIN GymSets gset2 ON gset2.session_exercise_id = gse2.id
-         JOIN GymSessions gs2 ON gs2.id = gse2.session_id
-         WHERE gse2.exercise_id = ?
-           AND gse2.session_id <> ?
-           AND (gset2.weight_kg IS NOT NULL OR gset2.reps IS NOT NULL)
-         ORDER BY gs2.started_at DESC, gs2.id DESC
-         LIMIT 100`,
-        [ex.exerciseId, id]
-      );
-
-      const lastBySet = {};
-      for (const row of prevRows) {
-        if (!lastBySet[row.setNumber]) {
-          lastBySet[row.setNumber] = {
-            weightKg: row.weightKg,
-            reps: row.reps,
-            sessionId: row.sessionId,
-            startedAt: row.startedAt,
-          };
-        }
-      }
-
-      hydrated.push({ ...ex, sets, lastBySet });
-    }
-
-    res.json({ ...session, exercises: hydrated });
-  } catch (err) {
-    logger.error('GET /api/gym/sessions/:id error', err);
-    res.status(500).json({ error: 'Failed to fetch session detail' });
-  }
-});
-
-// Mark session as completed
-app.patch('/api/gym/sessions/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
-
-    const result = await dbRunAsync(
-      `UPDATE GymSessions
-       SET status = 'completed'
-       WHERE id = ?`,
-      [id]
-    );
-
-    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
-
-    const session = await dbGetAsync(
-      `SELECT id, name, status, started_at as startedAt, created_at as createdAt
-       FROM GymSessions
-       WHERE id = ?`,
-      [id]
-    );
-
-    res.json(session);
-  } catch (err) {
-    logger.error('PATCH /api/gym/sessions/:id error', err);
-    res.status(500).json({ error: 'Failed to complete session' });
-  }
-});
-
-// Delete session
-app.delete('/api/gym/sessions/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
-
-    const result = await dbRunAsync('DELETE FROM GymSessions WHERE id = ?', [id]);
-    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
-
-    res.status(204).send();
-  } catch (err) {
-    logger.error('DELETE /api/gym/sessions/:id error', err);
-    res.status(500).json({ error: 'Failed to delete session' });
-  }
-});
-
-// List exercises
-app.get('/api/gym/exercises', async (_req, res) => {
-  try {
-    const rows = await dbAllAsync(
-      'SELECT id, name, muscle_group as muscleGroup, created_at as createdAt FROM GymExercises ORDER BY name ASC'
-    );
-    res.json(rows);
-  } catch (err) {
-    logger.error('GET /api/gym/exercises error', err);
-    res.status(500).json({ error: 'Failed to list exercises' });
-  }
-});
-
-// Add exercise to a session and precreate sets 1..3
-app.post('/api/gym/sessions/:id/exercises', async (req, res) => {
-  try {
-    const sessionId = Number(req.params.id);
-    const { exerciseId } = req.body || {};
-    const exerciseIdNum = Number(exerciseId);
-
-    if (!Number.isInteger(sessionId) || !Number.isInteger(exerciseIdNum)) {
-      return res.status(400).json({ error: 'Invalid sessionId or exerciseId' });
-    }
-
-    const session = await dbGetAsync('SELECT id FROM GymSessions WHERE id = ?', [sessionId]);
-    if (!session) return res.status(404).json({ error: 'Session not found' });
-
-    const exercise = await dbGetAsync('SELECT id FROM GymExercises WHERE id = ?', [exerciseIdNum]);
-    if (!exercise) return res.status(404).json({ error: 'Exercise not found' });
-
-    const orderRow = await dbGetAsync('SELECT COALESCE(MAX(exercise_order), -1) as maxOrder FROM GymSessionExercises WHERE session_id = ?', [sessionId]);
-    const nextOrder = Number(orderRow?.maxOrder ?? -1) + 1;
-
-    const created = await dbRunAsync(
-      'INSERT INTO GymSessionExercises (session_id, exercise_id, exercise_order) VALUES (?, ?, ?)',
-      [sessionId, exerciseIdNum, nextOrder]
-    );
-
-    for (let i = 1; i <= 3; i += 1) {
-      await dbRunAsync(
-        'INSERT INTO GymSets (session_exercise_id, set_number, weight_kg, reps) VALUES (?, ?, NULL, NULL)',
-        [created.lastID, i]
-      );
-    }
-
-    const row = await dbGetAsync(
-      `SELECT gse.id, gse.session_id as sessionId, gse.exercise_id as exerciseId, gse.exercise_order as exerciseOrder,
-              ge.name as exerciseName, ge.muscle_group as muscleGroup
-       FROM GymSessionExercises gse
-       JOIN GymExercises ge ON ge.id = gse.exercise_id
-       WHERE gse.id = ?`,
-      [created.lastID]
-    );
-
-    const sets = await dbAllAsync(
-      `SELECT id, session_exercise_id as sessionExerciseId, set_number as setNumber, weight_kg as weightKg, reps
-       FROM GymSets WHERE session_exercise_id = ? ORDER BY set_number ASC`,
-      [created.lastID]
-    );
-
-    res.status(201).json({ ...row, sets });
-  } catch (err) {
-    logger.error('POST /api/gym/sessions/:id/exercises error', err);
-    res.status(500).json({ error: 'Failed to add exercise to session' });
-  }
-});
-
-// Update set data
-app.put('/api/gym/sets/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const { weightKg, reps } = req.body || {};
-    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
-
-    const parsedWeight = weightKg === null || weightKg === '' || weightKg === undefined ? null : Number(weightKg);
-    const parsedReps = reps === null || reps === '' || reps === undefined ? null : Number(reps);
-
-    if (parsedWeight !== null && !Number.isFinite(parsedWeight)) return res.status(400).json({ error: 'Invalid weightKg' });
-    if (parsedReps !== null && !Number.isFinite(parsedReps)) return res.status(400).json({ error: 'Invalid reps' });
-    if (parsedWeight !== null && parsedWeight < 0) return res.status(400).json({ error: 'weightKg cannot be negative' });
-    if (parsedReps !== null && parsedReps < 0) return res.status(400).json({ error: 'reps cannot be negative' });
-
-    const result = await dbRunAsync(
-      'UPDATE GymSets SET weight_kg = ?, reps = ? WHERE id = ?',
-      [parsedWeight, parsedReps, id]
-    );
-
-    if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
-
-    const row = await dbGetAsync(
-      'SELECT id, session_exercise_id as sessionExerciseId, set_number as setNumber, weight_kg as weightKg, reps FROM GymSets WHERE id = ?',
-      [id]
-    );
-
-    res.json(row);
-  } catch (err) {
-    logger.error('PUT /api/gym/sets/:id error', err);
-    res.status(500).json({ error: 'Failed to update set' });
   }
 });
 
@@ -1531,7 +1127,7 @@ function updateCurrentMealTimestamp() {
 // Helper function to broadcast meal update to all connected clients
 async function broadcastMealUpdate() {
   try {
-    logger.log('[DEBUG] broadcastMealUpdate called');
+    console.log('[DEBUG] broadcastMealUpdate called');
     db.all(
       `SELECT 
         cmi.id,
@@ -1557,7 +1153,7 @@ async function broadcastMealUpdate() {
       [],
       (err, items) => {
         if (err) {
-          logger.error('[ERROR] Error fetching meal for broadcast', err);
+          console.error('[ERROR] Error fetching meal for broadcast', err);
           return;
         }
         // Transform to include temporary food data (same as GET endpoint)
@@ -1588,70 +1184,32 @@ async function broadcastMealUpdate() {
             };
           }
         });
-        logger.log('[DEBUG] Broadcasting meal-updated event with', transformed.length, 'items');
-        logger.log('[DEBUG] Transformed items:', JSON.stringify(transformed));
+        console.log('[DEBUG] Broadcasting meal-updated event with', transformed.length, 'items');
+        console.log('[DEBUG] Transformed items:', JSON.stringify(transformed));
         io.emit('meal-updated', transformed || []);
       }
     );
   } catch (err) {
-    logger.error('[ERROR] Error broadcasting meal update', err);
+    console.error('[ERROR] Error broadcasting meal update', err);
   }
 }
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  logger.log('Client connected:', socket.id);
+  console.log('Client connected:', socket.id);
 
   socket.on('disconnect', () => {
-    logger.log('Client disconnected:', socket.id);
+    console.log('Client disconnected:', socket.id);
   });
 });
-
-// Seed foods from CSV data if database is empty
-async function seedFoodsIfNeeded() {
-  return new Promise((resolve, reject) => {
-    db.get('SELECT COUNT(*) as count FROM Foods', [], (err, row) => {
-      if (err) {
-        logger.error('Error checking food count', err);
-        return reject(err);
-      }
-      
-      if (row.count > 0) {
-        logger.log(`Database already has ${row.count} foods, skipping seed`);
-        return resolve();
-      }
-      
-      logger.log(`Seeding ${SEED_FOODS.length} foods into database...`);
-      
-      const stmt = db.prepare('INSERT INTO Foods (name, base_amount, base_unit, calories, protein) VALUES (?, ?, ?, ?, ?)');
-      let inserted = 0;
-      
-      for (const food of SEED_FOODS) {
-        stmt.run([food.name, food.baseAmount, food.baseUnit, food.calories, food.protein], (err) => {
-          if (!err) inserted++;
-        });
-      }
-      
-      stmt.finalize((err) => {
-        if (err) {
-          logger.error('Error seeding foods', err);
-          return reject(err);
-        }
-        logger.log(`Seeded ${inserted} foods successfully`);
-        resolve();
-      });
-    });
-  });
-}
 
 httpServer.listen(PORT, async () => {
   try {
     await initDatabase();
-    await ensureGymTables();
-    await seedFoodsIfNeeded();
-    logger.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
   } catch (err) {
-    logger.error('Failed to start server', err);
+    console.error('Failed to start server', err);
   }
 });
+
 
